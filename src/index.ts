@@ -29,7 +29,7 @@ async function handleSignup(req: Request, env: Env): Promise<Response> {
   if (existing) return errorJson(req, 409, 'Email already exists');
 
   const userId = crypto.randomUUID();
-  const pwHash = await hashPassword(password);
+  const pwHash = await hashPassword(password, env.PASSWORD_PEPPER);
 
   await putEmailIndex(env, email, { userId, pwHash, createdAt: nowIso() });
 
@@ -50,7 +50,7 @@ async function handleLogin(req: Request, env: Env): Promise<Response> {
   const idx = await getEmailIndex(env, email);
   if (!idx) return errorJson(req, 401, 'Invalid email or password');
 
-  const ok = await verifyPassword(password, idx.pwHash);
+  const ok = await verifyPassword(password, idx.pwHash, env.PASSWORD_PEPPER);
   if (!ok) return errorJson(req, 401, 'Invalid email or password');
 
   const token = await issueToken(env, idx.userId);

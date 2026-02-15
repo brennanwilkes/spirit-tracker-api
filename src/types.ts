@@ -3,6 +3,7 @@ export interface Env {
   JWT_SECRET: string; // Worker secret
   JWT_ISS: string;
   JWT_AUD: string;
+  PASSWORD_PEPPER: string; // Worker secret
 }
 
 export type EmailIndex = {

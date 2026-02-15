@@ -2,3 +2,4 @@
 JWT_SECRET=dev-secret-change-me
 JWT_ISS=spirit-tracker-api
 JWT_AUD=spirit-tracker-api
+PASSWORD_PEPPER=some-long-random-string
