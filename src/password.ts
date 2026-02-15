@@ -2,7 +2,7 @@ import { b64UrlToBytes, bytesToB64Url } from './base64url';
 
 const HASH_BYTES = 32; // 256-bit
 const SALT_BYTES = 16;
-const ITERATIONS = 150_000;
+const ITERATIONS = 100_000;
 
 async function pbkdf2(password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
   const enc = new TextEncoder();
