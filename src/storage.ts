@@ -16,23 +16,23 @@ export async function kvPutJson(kv: KVNamespace, key: string, value: unknown): P
 }
 
 export async function getEmailIndex(env: Env, email: string): Promise<EmailIndex | null> {
-  return kvGetJson<EmailIndex>(env.KV, keys.emailIndex(email));
+  return kvGetJson<EmailIndex>(env.AUTH_KV, keys.emailIndex(email));
 }
 
 export async function putEmailIndex(env: Env, email: string, idx: EmailIndex): Promise<void> {
-  return kvPutJson(env.KV, keys.emailIndex(email), idx);
+  return kvPutJson(env.AUTH_KV, keys.emailIndex(email), idx);
 }
 
 export async function getDetails(env: Env, userId: string): Promise<Details | null> {
-  return kvGetJson<Details>(env.KV, keys.acct(userId, 'details'));
+  return kvGetJson<Details>(env.AUTH_KV, keys.acct(userId, 'details'));
 }
 
 export async function putAccountResource(env: Env, userId: string, resource: Resource, value: unknown): Promise<void> {
-  return kvPutJson(env.KV, keys.acct(userId, resource), value);
+  return kvPutJson(env.AUTH_KV, keys.acct(userId, resource), value);
 }
 
 export async function getAccountResource(env: Env, userId: string, resource: Resource): Promise<unknown | null> {
-  return kvGetJson<unknown>(env.KV, keys.acct(userId, resource));
+  return kvGetJson<unknown>(env.AUTH_KV, keys.acct(userId, resource));
 }
 
 export function defaultValue(resource: Resource): unknown {

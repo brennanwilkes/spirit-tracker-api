@@ -1,5 +1,5 @@
 export interface Env {
-  KV: KVNamespace;
+  AUTH_KV: KVNamespace;
   JWT_SECRET: string; // Worker secret
   JWT_ISS: string;
   JWT_AUD: string;
