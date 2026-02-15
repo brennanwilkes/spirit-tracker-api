@@ -1,0 +1,4 @@
+# For local dev with `npm run dev`
+JWT_SECRET=dev-secret-change-me
+JWT_ISS=spirit-tracker-api
+JWT_AUD=spirit-tracker-api

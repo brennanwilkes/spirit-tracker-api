@@ -1,0 +1,13 @@
+name = "spirit-tracker-api"
+main = "src/index.ts"
+compatibility_date = "2026-02-15"
+workers_dev = true
+minify = true
+
+[vars]
+JWT_ISS = "spirit-tracker-api"
+JWT_AUD = "spirit-tracker-api"
+
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "__KV_ID__"
