@@ -58,7 +58,18 @@ export function validateBoolMap(body: any, name: string): BoolMap {
   return out;
 }
 
-export function validateScorePatch(body: any): Score {
-  // same shape/constraints as score, just semantic name for patch
-  return validateScore(body);
+export type ScorePatch = Record<string, number | null>;
+export function validateScorePatch(body: any): ScorePatch {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('score must be an object');
+  const out: Record<string, number | null> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (typeof k !== 'string' || k.length > 256) throw new Error('score keys must be small strings');
+    if (v === null) {
+      out[k] = null; // delete
+      continue;
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error('score values must be numbers or null');
+    out[k] = v;
+  }
+  return out;
 }

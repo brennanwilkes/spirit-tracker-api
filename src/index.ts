@@ -33,17 +33,21 @@ function mergeBoolMapIntoStringArray(existing: unknown, patch: Record<string, bo
   return Array.from(set);
 }
 
-function mergeScore(existing: unknown, patch: Record<string, number>): Record<string, number> {
-  const cur: Record<string, number> =
-    existing && typeof existing === 'object' && !Array.isArray(existing)
-      ? Object.fromEntries(
-          Object.entries(existing as Record<string, unknown>).filter(
-            ([k, v]) => typeof k === 'string' && typeof v === 'number' && Number.isFinite(v)
-          )
-        )
-      : {};
+function mergeScore(existing: unknown, patch: Record<string, number | null>): Record<string, number> {
+  const cur: Record<string, number> = {};
 
-  for (const [k, v] of Object.entries(patch)) cur[k] = v;
+  if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+    for (const [k, v] of Object.entries(existing as Record<string, unknown>)) {
+      if (typeof k !== 'string' || k.length > 256) continue;
+      if (typeof v === 'number' && Number.isFinite(v)) cur[k] = v;
+    }
+  }
+
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete cur[k];
+    else cur[k] = v;
+  }
+
   return cur;
 }
 
@@ -62,7 +66,7 @@ async function handleAccountPost(req: Request, env: Env, userId: string, resourc
   }
 
   if (resource === 'score') {
-    const patch = validateScorePatch(body);
+    const patch = validateScorePatch(body); // number | null
     const existing = await getAccountResource(env, userId, 'score');
     const merged = mergeScore(existing ?? defaultValue('score'), patch);
     await putAccountResource(env, userId, 'score', merged);
