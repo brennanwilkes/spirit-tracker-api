@@ -93,7 +93,7 @@ async function githubEmail(env: Env, code: string, redirectUri: string, state: s
     },
     body: new URLSearchParams({
       client_id: env.GITHUB_CLIENT_ID,
-      client_secret: env.GITHUB_CLIENT_SECRET,
+      client_secret: env.GH_CLIENT_SECRET,
       code,
       redirect_uri: redirectUri,
       state
