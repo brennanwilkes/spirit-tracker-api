@@ -6,7 +6,7 @@ import { requireAuthSub } from './auth';
 import { signJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
 import { getAccountResource, getDetails, getEmailIndex, putAccountResource, putEmailIndex, defaultValue } from './storage';
-import { readJson, validateDetails, validateEmailPassword, validateScore, validateStringArray } from './validate';
+import { readJson, validateDetails, validateEmailPassword, validateScore, validateStringArray, validateBoolMap, validateScorePatch } from './validate';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -19,6 +19,57 @@ function trimTrailingSlashes(path: string): string {
 async function issueToken(env: Env, userId: string): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + JWT_TTL_SECONDS;
   return signJwt({ sub: userId, exp, iss: env.JWT_ISS, aud: env.JWT_AUD }, env.JWT_SECRET);
+}
+
+function mergeBoolMapIntoStringArray(existing: unknown, patch: Record<string, boolean>): string[] {
+  const cur = Array.isArray(existing) ? existing.filter((x) => typeof x === 'string') : [];
+  const set = new Set(cur);
+
+  for (const [k, v] of Object.entries(patch)) {
+    if (v) set.add(k);
+    else set.delete(k);
+  }
+
+  return Array.from(set);
+}
+
+function mergeScore(existing: unknown, patch: Record<string, number>): Record<string, number> {
+  const cur: Record<string, number> =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? Object.fromEntries(
+          Object.entries(existing as Record<string, unknown>).filter(
+            ([k, v]) => typeof k === 'string' && typeof v === 'number' && Number.isFinite(v)
+          )
+        )
+      : {};
+
+  for (const [k, v] of Object.entries(patch)) cur[k] = v;
+  return cur;
+}
+
+async function handleAccountPost(req: Request, env: Env, userId: string, resource: (typeof RESOURCES)[number]): Promise<Response> {
+  const sub = await requireAuthSub(req, env);
+  if (sub !== userId) return errorJson(req, 403, 'Forbidden');
+
+  const body = await readJson<any>(req);
+
+  if (resource === 'favourites' || resource === 'sampled') {
+    const patch = validateBoolMap(body, resource);
+    const existing = await getAccountResource(env, userId, resource);
+    const merged = mergeBoolMapIntoStringArray(existing ?? defaultValue(resource), patch);
+    await putAccountResource(env, userId, resource, merged);
+    return json(req, 200, { ok: true });
+  }
+
+  if (resource === 'score') {
+    const patch = validateScorePatch(body);
+    const existing = await getAccountResource(env, userId, 'score');
+    const merged = mergeScore(existing ?? defaultValue('score'), patch);
+    await putAccountResource(env, userId, 'score', merged);
+    return json(req, 200, { ok: true });
+  }
+
+  return errorJson(req, 405, 'Method not allowed');
 }
 
 async function handleSignup(req: Request, env: Env): Promise<Response> {
@@ -133,6 +184,7 @@ async function router(req: Request, env: Env): Promise<Response> {
   if (acct) {
     if (req.method === 'GET') return handleAccountGet(req, env, acct.userId, acct.resource);
     if (req.method === 'PUT') return handleAccountPut(req, env, acct.userId, acct.resource);
+    if (req.method === 'POST') return handleAccountPost(req, env, acct.userId, acct.resource);
     return errorJson(req, 405, 'Method not allowed');
   }
 

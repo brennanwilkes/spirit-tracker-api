@@ -1,5 +1,7 @@
 import type { Details, Score } from './types';
 
+export type BoolMap = Record<string, boolean>;
+
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -43,4 +45,20 @@ export function validateScore(body: any): Score {
     out[k] = v;
   }
   return out;
+}
+
+export function validateBoolMap(body: any, name: string): BoolMap {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error(`${name} must be an object`);
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (typeof k !== 'string' || k.length < 1 || k.length > 256) throw new Error(`${name} keys must be small strings`);
+    if (typeof v !== 'boolean') throw new Error(`${name} values must be boolean`);
+    out[k] = v;
+  }
+  return out;
+}
+
+export function validateScorePatch(body: any): Score {
+  // same shape/constraints as score, just semantic name for patch
+  return validateScore(body);
 }
