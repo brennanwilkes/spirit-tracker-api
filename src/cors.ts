@@ -6,7 +6,7 @@ export function corsHeaders(req: Request): HeadersInit {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET,PUT,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization,Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization,Content-Type,Cache-Control,Pragma',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin'
   };
