@@ -72,9 +72,14 @@ async function googleEmail(env: Env, code: string, redirectUri: string): Promise
     }).toString()
   });
 
-  const tokenJson: any = await tokenRes.json();
-  if (!tokenRes.ok || typeof tokenJson?.access_token !== 'string') throw new Error('Invalid token');
-
+  const tokenText = await tokenRes.text();
+  let tokenJson: any = null;
+  try { tokenJson = JSON.parse(tokenText); } catch {}
+  
+  if (!tokenRes.ok || typeof tokenJson?.access_token !== 'string') {
+    throw new Error(`Google token exchange failed (${tokenRes.status}): ${tokenText}`);
+  }
+  
   const uiRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
     headers: { Authorization: `Bearer ${tokenJson.access_token}` }
   });
