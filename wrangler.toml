@@ -10,8 +10,8 @@ JWT_AUD = "spirit-tracker-api"
 ALLOWED_ORIGIN = "https://spirit.codexwilkes.com"
 GOOGLE_CLIENT_ID = "476657631811-3qmp79ul2bb37r1g6p8jaq5g3jjikk3j.apps.googleusercontent.com"
 GITHUB_CLIENT_ID = "Ov23libK463TurCqoPz1"
-MAIL_HOST = "smtp.gmail.com"
-MAIL_PORT = 465
+MAIL_HOST = "smtp-relay.gmail.com"
+MAIL_PORT = 587
 
 [[kv_namespaces]]
 binding = "AUTH_KV"
