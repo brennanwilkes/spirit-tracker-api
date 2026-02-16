@@ -178,5 +178,5 @@ export async function handleOauth(req: Request, env: Env): Promise<Response | nu
   const token = await issueToken(env, userId);
 
   // send token to your SPA without putting it in server logs (fragment)
-  return htmlRedirect(`${ALLOWED_ORIGIN}/oauth#token=${encodeURIComponent(token)}&userId=${encodeURIComponent(userId)}`);
+  return htmlRedirect(`${ALLOWED_ORIGIN}/#/oauth#token=${encodeURIComponent(token)}&userId=${encodeURIComponent(userId)}`);
 }
