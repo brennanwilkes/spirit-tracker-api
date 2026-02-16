@@ -10,6 +10,14 @@ import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, va
 import { handleOauth } from './oauth';
 import { sendMailSmtp } from './smtp';
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: any;
+  const timeout = new Promise<T>((_, rej) => {
+    t = setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t));
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -106,42 +114,70 @@ async function handleAccountPost(req: Request, env: Env, userId: string, resourc
 }
 
 async function handleSignup(req: Request, env: Env): Promise<Response> {
-  const body = await readJson<any>(req);
-  const { email, password } = validateEmailPassword(body);
+  const STEP_MS = 15000;
 
-  const existing = await getEmailIndex(env, email);
+  console.log('[signup] start');
+
+  const body = await withTimeout(readJson<any>(req), STEP_MS, 'readJson');
+  console.log('[signup] parsed json');
+
+  const { email, password } = validateEmailPassword(body);
+  console.log('[signup] validated', email);
+
+  const existing = await withTimeout(getEmailIndex(env, email), STEP_MS, 'getEmailIndex');
+  console.log('[signup] got email index', existing ? 'exists' : 'missing');
   if (existing) return errorJson(req, 409, 'Email already exists');
 
   const userId = crypto.randomUUID();
-  const pwHash = await hashPassword(password, env.PASSWORD_PEPPER);
+  const pwHash = await withTimeout(hashPassword(password, env.PASSWORD_PEPPER), STEP_MS, 'hashPassword');
+  console.log('[signup] hashed password');
 
-  // Gate password-login until verified
-  await putEmailIndex(env, email, { userId, pwHash, createdAt: nowIso(), verified: false });
+  await withTimeout(
+    putEmailIndex(env, email, { userId, pwHash, createdAt: nowIso(), verified: false }),
+    STEP_MS,
+    'putEmailIndex'
+  );
+  console.log('[signup] stored email index');
 
-  // Default account docs + mark requiresVerify
-  await putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso(), email, requiresVerify: true });
-  await putAccountResource(env, userId, 'favourites', []);
-  await putAccountResource(env, userId, 'sampled', []);
-  await putAccountResource(env, userId, 'score', {});
+  await withTimeout(
+    putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso(), email, requiresVerify: true }),
+    STEP_MS,
+    'putAccountResource(details)'
+  );
+  await withTimeout(putAccountResource(env, userId, 'favourites', []), STEP_MS, 'putAccountResource(favourites)');
+  await withTimeout(putAccountResource(env, userId, 'sampled', []), STEP_MS, 'putAccountResource(sampled)');
+  await withTimeout(putAccountResource(env, userId, 'score', {}), STEP_MS, 'putAccountResource(score)');
+  console.log('[signup] stored account resources');
 
-  // Email verification link points to backend endpoint, which redirects back to frontend
-  const token = await issueActionToken(env, 'email_verify', userId, email, EMAIL_VERIFY_TTL_SECONDS);
+  const token = await withTimeout(
+    issueActionToken(env, 'email_verify', userId, email, EMAIL_VERIFY_TTL_SECONDS),
+    STEP_MS,
+    'issueActionToken'
+  );
+  console.log('[signup] issued verify token');
+
   const verifyUrl = new URL('/verify-email', new URL(req.url).origin);
   verifyUrl.searchParams.set('token', token);
 
   try {
-    await sendMailSmtp(env, {
-      to: email,
-      subject: 'Verify your email',
-      text:
-        `Welcome!\n\n` +
-        `Please verify your email to finish creating your account:\n\n` +
-        `${verifyUrl.toString()}\n\n` +
-        `This link expires in 24 hours.\n\n` +
-        `If you didn't sign up, you can ignore this email.\n`
-    });
+    await withTimeout(
+      sendMailSmtp(env, {
+        to: email,
+        subject: 'Verify your email',
+        text:
+          `Welcome!\n\n` +
+          `Please verify your email to finish creating your account:\n\n` +
+          `${verifyUrl.toString()}\n\n` +
+          `This link expires in 24 hours.\n\n` +
+          `If you didn't sign up, you can ignore this email.\n`,
+      }),
+      STEP_MS,
+      'sendMailSmtp'
+    );
+    console.log('[signup] email sent');
   } catch (e: any) {
-    // Best-effort rollback so user can retry signup
+    console.log('[signup] email failed', e?.message || e);
+    // rollback best-effort
     try { await env.AUTH_KV.delete(keys.emailIndex(email)); } catch {}
     try { await env.AUTH_KV.delete(keys.acct(userId, 'details')); } catch {}
     try { await env.AUTH_KV.delete(keys.acct(userId, 'favourites')); } catch {}
@@ -151,9 +187,10 @@ async function handleSignup(req: Request, env: Env): Promise<Response> {
     return errorJson(req, 500, msg);
   }
 
-  // No token until verified
+  console.log('[signup] done');
   return json(req, 200, { ok: true, requiresVerify: true });
 }
+
 
 async function handleLogin(req: Request, env: Env): Promise<Response> {
   const body = await readJson<any>(req);
