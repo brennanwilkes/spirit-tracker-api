@@ -3,7 +3,7 @@ import type { Env } from './types';
 import { errorJson } from './http';
 import { signJwt } from './jwt';
 import { bytesToB64Url } from './base64url';
-import { getEmailIndex, putEmailIndex, putAccountResource } from './storage';
+import { getDetails, getEmailIndex, putAccountResource, putEmailIndex } from './storage';
 import { normalizeEmail } from './validate';
 
 const STATE_TTL_SECONDS = 10 * 60;
@@ -38,16 +38,38 @@ async function issueToken(env: Env, userId: string): Promise<string> {
   return signJwt({ sub: userId, exp, iss: env.JWT_ISS, aud: env.JWT_AUD }, env.JWT_SECRET);
 }
 
+async function markVerifiedIfNeeded(env: Env, userId: string, email: string): Promise<void> {
+  const idx = await getEmailIndex(env, email);
+  if (!idx) return;
+
+  // If this email ever had a password signup pending verification, OAuth proves mailbox access.
+  if (idx.verified !== true) {
+    await putEmailIndex(env, email, { ...idx, verified: true, verifiedAt: nowIso() });
+
+    const details = (await getDetails(env, userId)) ?? { public: false };
+    const merged = {
+      ...details,
+      email,
+      requiresVerify: false,
+      verifiedAt: nowIso(),
+    };
+    await putAccountResource(env, userId, 'details', merged);
+  }
+}
+
 async function getOrCreateUserIdByEmail(env: Env, emailRaw: string): Promise<string> {
   const email = normalizeEmail(emailRaw);
   const existing = await getEmailIndex(env, email);
-  if (existing?.userId) return existing.userId;
+  if (existing?.userId) {
+    await markVerifiedIfNeeded(env, existing.userId, email);
+    return existing.userId;
+  }
 
   const userId = crypto.randomUUID();
-  await putEmailIndex(env, email, { userId, createdAt: nowIso() });
+  await putEmailIndex(env, email, { userId, createdAt: nowIso(), verified: true, verifiedAt: nowIso() });
 
-  // Default account docs (same as signup)
-  await putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso() });
+  // Default account docs (same as signup), but OAuth does not require verify
+  await putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso(), email, requiresVerify: false, verifiedAt: nowIso() });
   await putAccountResource(env, userId, 'favourites', []);
   await putAccountResource(env, userId, 'sampled', []);
   await putAccountResource(env, userId, 'score', {});
@@ -187,6 +209,5 @@ export async function handleOauth(req: Request, env: Env): Promise<Response | nu
   const userId = await getOrCreateUserIdByEmail(env, email);
   const token = await issueToken(env, userId);
 
-  // send token to your SPA without putting it in server logs (fragment)
   return htmlRedirect(`${ALLOWED_ORIGIN}/#/oauth#token=${encodeURIComponent(token)}&userId=${encodeURIComponent(userId)}`);
 }

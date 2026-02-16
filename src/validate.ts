@@ -22,6 +22,20 @@ export function validateEmailPassword(body: any): { email: string; password: str
   return { email, password };
 }
 
+export function validateEmailOnly(body: any): { email: string } {
+  const email = typeof body?.email === 'string' ? normalizeEmail(body.email) : '';
+  if (!email || !email.includes('@')) throw new Error('Invalid email');
+  return { email };
+}
+
+export function validatePasswordResetConfirm(body: any): { token: string; password: string } {
+  const token = typeof body?.token === 'string' ? body.token.trim() : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
+  if (!token || token.length < 20) throw new Error('Invalid token');
+  if (password.length < 8) throw new Error('Invalid password');
+  return { token, password };
+}
+
 export function validateDetails(body: any): Details {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('details must be an object');
   if (typeof body.public !== 'boolean') throw new Error('details.public must be boolean');

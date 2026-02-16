@@ -5,6 +5,10 @@ export type JwtPayload = {
   exp: number;
   iss: string;
   aud: string | string[];
+
+  typ?: string;   // "email_verify" | "pw_reset"
+  jti?: string;   // nonce for one-time use
+  email?: string; // normalized email for convenience
 };
 
 async function hmacKey(secret: string): Promise<CryptoKey> {

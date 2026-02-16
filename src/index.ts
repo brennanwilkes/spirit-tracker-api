@@ -1,13 +1,14 @@
-import { RESOURCES, UUID_RE, JWT_TTL_SECONDS } from './constants';
+import { RESOURCES, UUID_RE, JWT_TTL_SECONDS, EMAIL_VERIFY_TTL_SECONDS, PASSWORD_RESET_TTL_SECONDS } from './constants';
 import type { Env } from './types';
 import { handleOptions } from './cors';
 import { errorJson, json } from './http';
 import { requireAuthSub } from './auth';
-import { signJwt } from './jwt';
+import { signJwt, verifyJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
-import { getAccountResource, getDetails, getEmailIndex, putAccountResource, putEmailIndex, defaultValue } from './storage';
-import { readJson, validateDetails, validateEmailPassword, validateScore, validateStringArray, validateBoolMap, validateScorePatch } from './validate';
+import { getAccountResource, getDetails, getEmailIndex, keys, putAccountResource, putEmailIndex, defaultValue } from './storage';
+import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, validatePasswordResetConfirm, validateScore, validateStringArray, validateBoolMap, validateScorePatch, normalizeEmail } from './validate';
 import { handleOauth } from './oauth';
+import { sendMailSmtp } from './smtp';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -20,6 +21,33 @@ function trimTrailingSlashes(path: string): string {
 async function issueToken(env: Env, userId: string): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + JWT_TTL_SECONDS;
   return signJwt({ sub: userId, exp, iss: env.JWT_ISS, aud: env.JWT_AUD }, env.JWT_SECRET);
+}
+
+// --- One-time action tokens (email verify + password reset) ---
+
+type ActionType = 'email_verify' | 'pw_reset';
+
+function actionKey(typ: ActionType, jti: string): string {
+  return `auth/action/${typ}/${jti}`;
+}
+
+async function putAction(env: Env, typ: ActionType, jti: string, userId: string, ttlSeconds: number): Promise<void> {
+  await env.AUTH_KV.put(actionKey(typ, jti), userId, { expirationTtl: ttlSeconds });
+}
+
+async function takeAction(env: Env, typ: ActionType, jti: string): Promise<string | null> {
+  const k = actionKey(typ, jti);
+  const v = await env.AUTH_KV.get(k);
+  if (!v) return null;
+  await env.AUTH_KV.delete(k);
+  return v;
+}
+
+async function issueActionToken(env: Env, typ: ActionType, userId: string, email: string, ttlSeconds: number): Promise<string> {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const jti = crypto.randomUUID();
+  await putAction(env, typ, jti, userId, ttlSeconds);
+  return signJwt({ sub: userId, exp, iss: env.JWT_ISS, aud: env.JWT_AUD, typ, jti, email }, env.JWT_SECRET);
 }
 
 function mergeBoolMapIntoStringArray(existing: unknown, patch: Record<string, boolean>): string[] {
@@ -87,16 +115,44 @@ async function handleSignup(req: Request, env: Env): Promise<Response> {
   const userId = crypto.randomUUID();
   const pwHash = await hashPassword(password, env.PASSWORD_PEPPER);
 
-  await putEmailIndex(env, email, { userId, pwHash, createdAt: nowIso() });
+  // Gate password-login until verified
+  await putEmailIndex(env, email, { userId, pwHash, createdAt: nowIso(), verified: false });
 
-  // Default account docs
-  await putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso() });
+  // Default account docs + mark requiresVerify
+  await putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso(), email, requiresVerify: true });
   await putAccountResource(env, userId, 'favourites', []);
   await putAccountResource(env, userId, 'sampled', []);
   await putAccountResource(env, userId, 'score', {});
 
-  const token = await issueToken(env, userId);
-  return json(req, 200, { token, userId });
+  // Email verification link points to backend endpoint, which redirects back to frontend
+  const token = await issueActionToken(env, 'email_verify', userId, email, EMAIL_VERIFY_TTL_SECONDS);
+  const verifyUrl = new URL('/verify-email', new URL(req.url).origin);
+  verifyUrl.searchParams.set('token', token);
+
+  try {
+    await sendMailSmtp(env, {
+      to: email,
+      subject: 'Verify your email',
+      text:
+        `Welcome!\n\n` +
+        `Please verify your email to finish creating your account:\n\n` +
+        `${verifyUrl.toString()}\n\n` +
+        `This link expires in 24 hours.\n\n` +
+        `If you didn't sign up, you can ignore this email.\n`
+    });
+  } catch (e: any) {
+    // Best-effort rollback so user can retry signup
+    try { await env.AUTH_KV.delete(keys.emailIndex(email)); } catch {}
+    try { await env.AUTH_KV.delete(keys.acct(userId, 'details')); } catch {}
+    try { await env.AUTH_KV.delete(keys.acct(userId, 'favourites')); } catch {}
+    try { await env.AUTH_KV.delete(keys.acct(userId, 'sampled')); } catch {}
+    try { await env.AUTH_KV.delete(keys.acct(userId, 'score')); } catch {}
+    const msg = typeof e?.message === 'string' ? e.message : 'Failed to send verification email';
+    return errorJson(req, 500, msg);
+  }
+
+  // No token until verified
+  return json(req, 200, { ok: true, requiresVerify: true });
 }
 
 async function handleLogin(req: Request, env: Env): Promise<Response> {
@@ -107,11 +163,115 @@ async function handleLogin(req: Request, env: Env): Promise<Response> {
   if (!idx) return errorJson(req, 401, 'Invalid email or password');
   if (!idx.pwHash) return errorJson(req, 401, 'Use OAuth login');
 
+  // New: block until verified (only when explicitly false)
+  if (idx.verified === false) return errorJson(req, 403, 'Email not verified');
+
   const ok = await verifyPassword(password, idx.pwHash, env.PASSWORD_PEPPER);
   if (!ok) return errorJson(req, 401, 'Invalid email or password');
 
   const token = await issueToken(env, idx.userId);
   return json(req, 200, { token, userId: idx.userId });
+}
+
+async function handleVerifyEmail(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const token = (url.searchParams.get('token') || '').trim();
+  if (!token) return errorJson(req, 400, 'Invalid token');
+
+  let p: any;
+  try {
+    p = await verifyJwt(token, env.JWT_SECRET, { iss: env.JWT_ISS, aud: env.JWT_AUD });
+  } catch (e: any) {
+    const msg = typeof e?.message === 'string' ? e.message : 'Invalid token';
+    return errorJson(req, 400, msg);
+  }
+
+  const typ = String(p?.typ || '');
+  const jti = String(p?.jti || '');
+  const sub = String(p?.sub || '');
+  const email = normalizeEmail(String(p?.email || ''));
+
+  if (typ !== 'email_verify' || !jti || !sub || !email) return errorJson(req, 400, 'Invalid token');
+
+  const stored = await takeAction(env, 'email_verify', jti);
+  if (!stored || stored !== sub) return errorJson(req, 400, 'Invalid token');
+
+  const idx = await getEmailIndex(env, email);
+  if (!idx || idx.userId !== sub) return errorJson(req, 400, 'Invalid token');
+
+  await putEmailIndex(env, email, { ...idx, verified: true, verifiedAt: nowIso() });
+
+  const details = (await getDetails(env, sub)) ?? { public: false };
+  await putAccountResource(env, sub, 'details', { ...details, email, requiresVerify: false, verifiedAt: nowIso() });
+
+  // Redirect back to SPA login with a badge param
+  return Response.redirect(`${'https://spirit.codexwilkes.com'}/#/login?verified=1`, 302);
+}
+
+async function handlePasswordResetRequest(req: Request, env: Env): Promise<Response> {
+  const body = await readJson<any>(req);
+  const { email } = validateEmailOnly(body);
+
+  // Always return ok to avoid enumeration
+  const idx = await getEmailIndex(env, email);
+
+  // Only email/password accounts get reset links
+  if (idx?.userId && idx.pwHash) {
+    const token = await issueActionToken(env, 'pw_reset', idx.userId, email, PASSWORD_RESET_TTL_SECONDS);
+    const resetLink = `${'https://spirit.codexwilkes.com'}/#/reset?token=${encodeURIComponent(token)}`;
+
+    try {
+      await sendMailSmtp(env, {
+        to: email,
+        subject: 'Reset your password',
+        text:
+          `A password reset was requested for your account.\n\n` +
+          `Use this link to set a new password (expires in 30 minutes):\n\n` +
+          `${resetLink}\n\n` +
+          `If you didn't request this, you can ignore this email.\n`
+      });
+    } catch {
+      // swallow: still return ok
+    }
+  }
+
+  return json(req, 200, { ok: true });
+}
+
+async function handlePasswordResetConfirm(req: Request, env: Env): Promise<Response> {
+  const body = await readJson<any>(req);
+  const { token, password } = validatePasswordResetConfirm(body);
+
+  let p: any;
+  try {
+    p = await verifyJwt(token, env.JWT_SECRET, { iss: env.JWT_ISS, aud: env.JWT_AUD });
+  } catch (e: any) {
+    const msg = typeof e?.message === 'string' ? e.message : 'Invalid token';
+    return errorJson(req, 400, msg);
+  }
+
+  const typ = String(p?.typ || '');
+  const jti = String(p?.jti || '');
+  const sub = String(p?.sub || '');
+  const email = normalizeEmail(String(p?.email || ''));
+
+  if (typ !== 'pw_reset' || !jti || !sub || !email) return errorJson(req, 400, 'Invalid token');
+
+  const stored = await takeAction(env, 'pw_reset', jti);
+  if (!stored || stored !== sub) return errorJson(req, 400, 'Invalid token');
+
+  const idx = await getEmailIndex(env, email);
+  if (!idx || idx.userId !== sub) return errorJson(req, 400, 'Invalid token');
+
+  const pwHash = await hashPassword(password, env.PASSWORD_PEPPER);
+
+  // If user can reset via email, that's equivalent to mailbox verification.
+  await putEmailIndex(env, email, { ...idx, pwHash, verified: true, verifiedAt: nowIso() });
+
+  const details = (await getDetails(env, sub)) ?? { public: false };
+  await putAccountResource(env, sub, 'details', { ...details, email, requiresVerify: false, verifiedAt: nowIso() });
+
+  return json(req, 200, { ok: true });
 }
 
 function parseAccountRoute(pathname: string): { userId: string; resource: (typeof RESOURCES)[number] } | null {
@@ -189,6 +349,21 @@ async function router(req: Request, env: Env): Promise<Response> {
     return handleLogin(req, env);
   }
 
+  if (pathname === '/verify-email') {
+    if (req.method !== 'GET') return errorJson(req, 405, 'Method not allowed');
+    return handleVerifyEmail(req, env);
+  }
+
+  if (pathname === '/password-reset/request') {
+    if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
+    return handlePasswordResetRequest(req, env);
+  }
+
+  if (pathname === '/password-reset/confirm') {
+    if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
+    return handlePasswordResetConfirm(req, env);
+  }
+
   const acct = parseAccountRoute(pathname);
   if (acct) {
     if (req.method === 'GET') return handleAccountGet(req, env, acct.userId, acct.resource);
@@ -206,9 +381,10 @@ export default {
       return await router(req, env);
     } catch (err: any) {
       const msg = typeof err?.message === 'string' ? err.message : 'Internal error';
-      const status = msg.includes('Missing bearer token') || msg.includes('Invalid token') || msg.includes('Token expired') ? 401 :
+      const status =
+        msg.includes('Missing bearer token') || msg.includes('Invalid token') || msg.includes('Token expired') ? 401 :
         msg.includes('Expected application/json') || msg.includes('Invalid') || msg.includes('must') ? 400 :
-          500;
+        500;
       return errorJson(req, status, msg);
     }
   }
