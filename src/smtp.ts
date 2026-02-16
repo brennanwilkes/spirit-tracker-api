@@ -3,12 +3,10 @@ import type { Env } from './types';
 
 const FROM_EMAIL = 'spirit@codexwilkes.com';
 const FROM_HEADER = 'Spirit Tracker <spirit@codexwilkes.com>';
+
 function log(stage: string, data?: unknown) {
-  if (data !== undefined) {
-    console.log(`[smtp] ${stage}`, data);
-  } else {
-    console.log(`[smtp] ${stage}`);
-  }
+  if (data !== undefined) console.log(`[smtp] ${stage}`, data);
+  else console.log(`[smtp] ${stage}`);
 }
 
 type Mail = {
@@ -28,18 +26,24 @@ function b64StdText(s: string): string {
 }
 
 function formatDate(d = new Date()): string {
-  // RFC 2822-ish; good enough for transactional mail
   return d.toUTCString();
 }
 
 function dotStuff(text: string): string {
-  // SMTP DATA dot-stuffing
   return text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .split('\n')
     .map((line) => (line.startsWith('.') ? '.' + line : line))
     .join('\r\n');
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: any;
+  const timeout = new Promise<T>((_, rej) => {
+    t = setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t));
 }
 
 class SmtpClient {
@@ -94,7 +98,7 @@ class SmtpClient {
 
       code = Number(m[1]);
       const sep = m[2];
-      if (sep === ' ') break; // final line
+      if (sep === ' ') break;
     }
 
     return { code, lines };
@@ -119,7 +123,6 @@ function pickEhloName(): string {
 }
 
 function parseEhloCaps(lines: string[]): Set<string> {
-  // EHLO lines look like: "250-PIPELINING", "250-AUTH PLAIN LOGIN", etc
   const caps = new Set<string>();
   for (const l of lines) {
     const m = l.match(/^\d{3}[ -](.+)$/);
@@ -143,44 +146,38 @@ function hasStartTls(caps: Set<string>): boolean {
   return caps.has('STARTTLS');
 }
 
-async function smtpAuth(
-  client: SmtpClient,
-  caps: Set<string>,
-  username: string,
-  password: string
-): Promise<void> {
+async function smtpAuth(client: SmtpClient, caps: Set<string>, username: string, password: string): Promise<void> {
   if (hasAuthPlain(caps)) {
-    // AUTH PLAIN base64("\0user\0pass")
     const msg = `\u0000${username}\u0000${password}`;
     const r = await client.cmd(`AUTH PLAIN ${b64StdText(msg)}`);
-    if (r.code !== 235) throw new Error(`SMTP auth failed (${r.code})`);
+    if (r.code !== 235) throw new Error(`SMTP auth failed (${r.code}): ${r.lines.join(' | ')}`);
     return;
   }
 
-  // AUTH LOGIN, then username, then password
   if (hasAuthLogin(caps)) {
     let r = await client.cmd('AUTH LOGIN');
-    if (r.code !== 334) throw new Error(`SMTP auth failed (${r.code})`);
+    if (r.code !== 334) throw new Error(`SMTP auth failed (${r.code}): ${r.lines.join(' | ')}`);
     r = await client.cmd(b64StdText(username));
-    if (r.code !== 334) throw new Error(`SMTP auth failed (${r.code})`);
+    if (r.code !== 334) throw new Error(`SMTP auth failed (${r.code}): ${r.lines.join(' | ')}`);
     r = await client.cmd(b64StdText(password));
-    if (r.code !== 235) throw new Error(`SMTP auth failed (${r.code})`);
+    if (r.code !== 235) throw new Error(`SMTP auth failed (${r.code}): ${r.lines.join(' | ')}`);
     return;
   }
 
-  throw new Error('SMTP server does not support AUTH PLAIN/LOGIN');
+  throw new Error(`SMTP server does not support AUTH PLAIN/LOGIN (caps: ${Array.from(caps).join(', ')})`);
 }
-
 
 export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
   const host = String(env.MAIL_HOST || '').trim();
   const port = Number(env.MAIL_PORT || '0');
   const username = String(env.MAIL_USERNAME || '').trim();
   const password = String(env.MAIL_PASSWORD || '').trim();
+  const timeoutMs = Number((env as any).MAIL_TIMEOUT_MS ?? 15000);
 
   log('env-check', {
     MAIL_HOST: host,
     MAIL_PORT: port,
+    timeoutMs,
     has_USERNAME: Boolean(username),
     has_PASSWORD: Boolean(password),
     env_keys: Object.keys(env).sort(),
@@ -193,41 +190,48 @@ export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
   const to = String(mail.to || '').trim();
   if (!to || !to.includes('@')) throw new Error('Invalid recipient');
 
+  // 587 => STARTTLS, 465 => implicit TLS
   const secureTransport = port === 465 ? 'on' : 'starttls';
   const socket = connect({ hostname: host, port }, { secureTransport } as any);
   let client = new SmtpClient(socket);
-
   let isEncrypted = secureTransport === 'on';
 
   try {
-    let r = await client.readResponse();
-    if (r.code !== 220) throw new Error(`SMTP banner failed (${r.code})`);
+    let r = await withTimeout(client.readResponse(), timeoutMs, 'SMTP banner');
+    log('banner', r.lines);
+    if (r.code !== 220) throw new Error(`SMTP banner failed (${r.code}): ${r.lines.join(' | ')}`);
 
-    r = await client.cmd(`EHLO ${pickEhloName()}`);
-    if (r.code !== 250) throw new Error(`SMTP EHLO failed (${r.code})`);
+    r = await withTimeout(client.cmd(`EHLO ${pickEhloName()}`), timeoutMs, 'SMTP EHLO');
+    log('ehlo', r.lines);
+    if (r.code !== 250) throw new Error(`SMTP EHLO failed (${r.code}): ${r.lines.join(' | ')}`);
     let caps = parseEhloCaps(r.lines);
 
     if (!isEncrypted) {
-      if (!hasStartTls(caps)) throw new Error('SMTP server does not support STARTTLS');
-      r = await client.cmd('STARTTLS');
-      if (r.code !== 220) throw new Error(`SMTP STARTTLS failed (${r.code})`);
+      if (!hasStartTls(caps)) throw new Error(`SMTP server does not support STARTTLS (caps: ${Array.from(caps).join(', ')})`);
+      r = await withTimeout(client.cmd('STARTTLS'), timeoutMs, 'SMTP STARTTLS');
+      log('starttls', r.lines);
+      if (r.code !== 220) throw new Error(`SMTP STARTTLS failed (${r.code}): ${r.lines.join(' | ')}`);
+
       client = client.startTls();
       isEncrypted = true;
 
-      r = await client.cmd(`EHLO ${pickEhloName()}`);
-      if (r.code !== 250) throw new Error(`SMTP EHLO (post-TLS) failed (${r.code})`);
+      r = await withTimeout(client.cmd(`EHLO ${pickEhloName()}`), timeoutMs, 'SMTP EHLO post-TLS');
+      log('ehlo-post-tls', r.lines);
+      if (r.code !== 250) throw new Error(`SMTP EHLO (post-TLS) failed (${r.code}): ${r.lines.join(' | ')}`);
       caps = parseEhloCaps(r.lines);
     }
 
-    await smtpAuth(client, caps, username, password);
+    await withTimeout(smtpAuth(client, caps, username, password), timeoutMs, 'SMTP AUTH');
+    log('auth', 'ok');
 
-    r = await client.cmd(`MAIL FROM:<${FROM_EMAIL}>`);
-    if (r.code !== 250) throw new Error(`SMTP MAIL FROM failed (${r.code})`);
-    r = await client.cmd(`RCPT TO:<${to}>`);
-    if (r.code !== 250 && r.code !== 251) throw new Error(`SMTP RCPT TO failed (${r.code})`);
+    r = await withTimeout(client.cmd(`MAIL FROM:<${FROM_EMAIL}>`), timeoutMs, 'SMTP MAIL FROM');
+    if (r.code !== 250) throw new Error(`SMTP MAIL FROM failed (${r.code}): ${r.lines.join(' | ')}`);
 
-    r = await client.cmd('DATA');
-    if (r.code !== 354) throw new Error(`SMTP DATA failed (${r.code})`);
+    r = await withTimeout(client.cmd(`RCPT TO:<${to}>`), timeoutMs, 'SMTP RCPT TO');
+    if (r.code !== 250 && r.code !== 251) throw new Error(`SMTP RCPT TO failed (${r.code}): ${r.lines.join(' | ')}`);
+
+    r = await withTimeout(client.cmd('DATA'), timeoutMs, 'SMTP DATA');
+    if (r.code !== 354) throw new Error(`SMTP DATA failed (${r.code}): ${r.lines.join(' | ')}`);
 
     const msgId = `<${crypto.randomUUID()}@${pickEhloName()}>`;
     const bodyText = dotStuff(String(mail.text || ''));
@@ -245,11 +249,11 @@ export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
       `${bodyText}\r\n` +
       `\r\n.\r\n`;
 
-    await client.sendRaw(data);
-    r = await client.readResponse();
-    if (r.code !== 250) throw new Error(`SMTP send failed (${r.code})`);
+    await withTimeout(client.sendRaw(data), timeoutMs, 'SMTP send data');
+    r = await withTimeout(client.readResponse(), timeoutMs, 'SMTP data response');
+    if (r.code !== 250) throw new Error(`SMTP send failed (${r.code}): ${r.lines.join(' | ')}`);
 
-    try { await client.cmd('QUIT'); } catch {}
+    try { await withTimeout(client.cmd('QUIT'), timeoutMs, 'SMTP QUIT'); } catch {}
   } finally {
     await client.close();
   }
