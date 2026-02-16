@@ -3,6 +3,13 @@ import type { Env } from './types';
 
 const FROM_EMAIL = 'spirit@codexwilkes.com';
 const FROM_HEADER = 'Spirit Tracker <spirit@codexwilkes.com>';
+function log(stage: string, data?: unknown) {
+  if (data !== undefined) {
+    console.log(`[smtp] ${stage}`, data);
+  } else {
+    console.log(`[smtp] ${stage}`);
+  }
+}
 
 type Mail = {
   to: string;
@@ -170,6 +177,14 @@ export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
   const port = Number(env.MAIL_PORT || '0');
   const username = String(env.MAIL_USERNAME || '').trim();
   const password = String(env.MAIL_PASSWORD || '').trim();
+
+  log('env-check', {
+    MAIL_HOST: host,
+    MAIL_PORT: port,
+    has_USERNAME: Boolean(username),
+    has_PASSWORD: Boolean(password),
+    env_keys: Object.keys(env).sort(),
+  });
 
   if (!host) throw new Error('MAIL_HOST not configured');
   if (!Number.isFinite(port) || port <= 0) throw new Error('MAIL_PORT not configured');
