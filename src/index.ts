@@ -7,6 +7,7 @@ import { signJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
 import { getAccountResource, getDetails, getEmailIndex, putAccountResource, putEmailIndex, defaultValue } from './storage';
 import { readJson, validateDetails, validateEmailPassword, validateScore, validateStringArray, validateBoolMap, validateScorePatch } from './validate';
+import { handleOauth } from './oauth';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -104,6 +105,7 @@ async function handleLogin(req: Request, env: Env): Promise<Response> {
 
   const idx = await getEmailIndex(env, email);
   if (!idx) return errorJson(req, 401, 'Invalid email or password');
+  if (!idx.pwHash) return errorJson(req, 401, 'Use OAuth login');
 
   const ok = await verifyPassword(password, idx.pwHash, env.PASSWORD_PEPPER);
   if (!ok) return errorJson(req, 401, 'Invalid email or password');
@@ -166,6 +168,9 @@ async function handleAccountPut(req: Request, env: Env, userId: string, resource
 async function router(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const pathname = trimTrailingSlashes(url.pathname);
+
+  const oauth = await handleOauth(req, env);
+  if (oauth) return oauth;
 
   if (req.method === 'OPTIONS') return handleOptions(req);
 
