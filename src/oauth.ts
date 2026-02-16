@@ -100,9 +100,14 @@ async function githubEmail(env: Env, code: string, redirectUri: string, state: s
     }).toString()
   });
 
-  const tokenJson: any = await tokenRes.json();
-  if (!tokenRes.ok || typeof tokenJson?.access_token !== 'string') throw new Error('Invalid token');
-
+  const tokenText = await tokenRes.text();
+  let tokenJson: any = null;
+  try { tokenJson = JSON.parse(tokenText); } catch {}
+  
+  if (!tokenRes.ok || typeof tokenJson?.access_token !== 'string') {
+    throw new Error(`GitHub token exchange failed (${tokenRes.status}): ${tokenText}`);
+  }
+  
   const emailsRes = await fetch('https://api.github.com/user/emails', {
     headers: {
       Authorization: `Bearer ${tokenJson.access_token}`,
