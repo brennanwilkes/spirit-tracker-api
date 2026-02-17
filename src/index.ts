@@ -407,10 +407,17 @@ export default {
       return await router(req, env);
     } catch (err: any) {
       const msg = typeof err?.message === 'string' ? err.message : 'Internal error';
+    
+      const isKvDailyLimit =
+        /kv\s*put\(\)\s*limit exceeded/i.test(msg) ||
+        /put\(\)\s*limit exceeded/i.test(msg);
+    
       const status =
+        isKvDailyLimit ? 429 :
         msg.includes('Missing bearer token') || msg.includes('Invalid token') || msg.includes('Token expired') ? 401 :
         msg.includes('Expected application/json') || msg.includes('Invalid') || msg.includes('must') ? 400 :
         500;
+    
       return errorJson(req, status, msg);
     }
   }
