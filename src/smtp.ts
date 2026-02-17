@@ -4,11 +4,6 @@ import type { Env } from './types';
 const FROM_EMAIL = 'spirit@codexwilkes.com';
 const FROM_HEADER = 'Spirit Tracker <spirit@codexwilkes.com>';
 
-function log(stage: string, data?: unknown) {
-  if (data !== undefined) console.log(`[smtp] ${stage}`, data);
-  else console.log(`[smtp] ${stage}`);
-}
-
 type Mail = {
   to: string;
   subject: string;
@@ -174,15 +169,6 @@ export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
   const password = String(env.MAIL_PASSWORD || '').trim();
   const timeoutMs = Number((env as any).MAIL_TIMEOUT_MS ?? 15000);
 
-  log('env-check', {
-    MAIL_HOST: host,
-    MAIL_PORT: port,
-    timeoutMs,
-    has_USERNAME: Boolean(username),
-    has_PASSWORD: Boolean(password),
-    env_keys: Object.keys(env).sort(),
-  });
-
   if (!host) throw new Error('MAIL_HOST not configured');
   if (!Number.isFinite(port) || port <= 0) throw new Error('MAIL_PORT not configured');
   if (!username || !password) throw new Error('MAIL_USERNAME/MAIL_PASSWORD not configured');
@@ -198,31 +184,26 @@ export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
 
   try {
     let r = await withTimeout(client.readResponse(), timeoutMs, 'SMTP banner');
-    log('banner', r.lines);
     if (r.code !== 220) throw new Error(`SMTP banner failed (${r.code}): ${r.lines.join(' | ')}`);
 
     r = await withTimeout(client.cmd(`EHLO ${pickEhloName()}`), timeoutMs, 'SMTP EHLO');
-    log('ehlo', r.lines);
     if (r.code !== 250) throw new Error(`SMTP EHLO failed (${r.code}): ${r.lines.join(' | ')}`);
     let caps = parseEhloCaps(r.lines);
 
     if (!isEncrypted) {
       if (!hasStartTls(caps)) throw new Error(`SMTP server does not support STARTTLS (caps: ${Array.from(caps).join(', ')})`);
       r = await withTimeout(client.cmd('STARTTLS'), timeoutMs, 'SMTP STARTTLS');
-      log('starttls', r.lines);
       if (r.code !== 220) throw new Error(`SMTP STARTTLS failed (${r.code}): ${r.lines.join(' | ')}`);
 
       client = client.startTls();
       isEncrypted = true;
 
       r = await withTimeout(client.cmd(`EHLO ${pickEhloName()}`), timeoutMs, 'SMTP EHLO post-TLS');
-      log('ehlo-post-tls', r.lines);
       if (r.code !== 250) throw new Error(`SMTP EHLO (post-TLS) failed (${r.code}): ${r.lines.join(' | ')}`);
       caps = parseEhloCaps(r.lines);
     }
 
     await withTimeout(smtpAuth(client, caps, username, password), timeoutMs, 'SMTP AUTH');
-    log('auth', 'ok');
 
     r = await withTimeout(client.cmd(`MAIL FROM:<${FROM_EMAIL}>`), timeoutMs, 'SMTP MAIL FROM');
     if (r.code !== 250) throw new Error(`SMTP MAIL FROM failed (${r.code}): ${r.lines.join(' | ')}`);

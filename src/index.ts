@@ -116,28 +116,22 @@ async function handleAccountPost(req: Request, env: Env, userId: string, resourc
 async function handleSignup(req: Request, env: Env): Promise<Response> {
   const STEP_MS = 15000;
 
-  console.log('[signup] start');
 
   const body = await withTimeout(readJson<any>(req), STEP_MS, 'readJson');
-  console.log('[signup] parsed json');
 
   const { email, password } = validateEmailPassword(body);
-  console.log('[signup] validated', email);
 
   const existing = await withTimeout(getEmailIndex(env, email), STEP_MS, 'getEmailIndex');
-  console.log('[signup] got email index', existing ? 'exists' : 'missing');
   if (existing) return errorJson(req, 409, 'Email already exists');
 
   const userId = crypto.randomUUID();
   const pwHash = await withTimeout(hashPassword(password, env.PASSWORD_PEPPER), STEP_MS, 'hashPassword');
-  console.log('[signup] hashed password');
 
   await withTimeout(
     putEmailIndex(env, email, { userId, pwHash, createdAt: nowIso(), verified: false }),
     STEP_MS,
     'putEmailIndex'
   );
-  console.log('[signup] stored email index');
 
   await withTimeout(
     putAccountResource(env, userId, 'details', { public: false, createdAt: nowIso(), email, requiresVerify: true }),
@@ -147,14 +141,12 @@ async function handleSignup(req: Request, env: Env): Promise<Response> {
   await withTimeout(putAccountResource(env, userId, 'favourites', []), STEP_MS, 'putAccountResource(favourites)');
   await withTimeout(putAccountResource(env, userId, 'sampled', []), STEP_MS, 'putAccountResource(sampled)');
   await withTimeout(putAccountResource(env, userId, 'score', {}), STEP_MS, 'putAccountResource(score)');
-  console.log('[signup] stored account resources');
 
   const token = await withTimeout(
     issueActionToken(env, 'email_verify', userId, email, EMAIL_VERIFY_TTL_SECONDS),
     STEP_MS,
     'issueActionToken'
   );
-  console.log('[signup] issued verify token');
 
   const verifyUrl = new URL('/verify-email', new URL(req.url).origin);
   verifyUrl.searchParams.set('token', token);
@@ -174,9 +166,7 @@ async function handleSignup(req: Request, env: Env): Promise<Response> {
       STEP_MS,
       'sendMailSmtp'
     );
-    console.log('[signup] email sent');
   } catch (e: any) {
-    console.log('[signup] email failed', e?.message || e);
     // rollback best-effort
     try { await env.AUTH_KV.delete(keys.emailIndex(email)); } catch {}
     try { await env.AUTH_KV.delete(keys.acct(userId, 'details')); } catch {}
@@ -187,7 +177,6 @@ async function handleSignup(req: Request, env: Env): Promise<Response> {
     return errorJson(req, 500, msg);
   }
 
-  console.log('[signup] done');
   return json(req, 200, { ok: true, requiresVerify: true });
 }
 
