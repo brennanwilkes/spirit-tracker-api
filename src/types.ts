@@ -26,8 +26,10 @@ export type EmailIndex = {
   verifiedAt?: string;
 };
 
+// types.ts
 export type Details = {
   public: boolean;
+  shortlistName?: string;
   [k: string]: unknown;
 };
 
