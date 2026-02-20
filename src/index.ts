@@ -380,6 +380,11 @@ async function router(req: Request, env: Env): Promise<Response> {
     return json(req, 200, { ok: true });
   }
 
+  if (pathname === '/shortlists') {
+    if (req.method !== 'GET') return errorJson(req, 405, 'Method not allowed');
+    return handleShortlistsGet(req, env);
+  }
+
   if (pathname === '/signup') {
     if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
     return handleSignup(req, env);
@@ -437,3 +442,37 @@ export default {
     }
   }
 };
+
+async function handleShortlistsGet(req: Request, env: Env): Promise<Response> {
+  const out: Array<{ uuid: string; shortlistName: string }> = [];
+
+  let cursor: string | undefined = undefined;
+  do {
+    const res = await env.AUTH_KV.list({ prefix: 'acct/', cursor, limit: 1000 });
+    cursor = res.cursor;
+
+    for (const k of res.keys) {
+      // only details objects
+      if (!k.name.endsWith('/details')) continue;
+
+      // key format: acct/<uuid>/details
+      const parts = k.name.split('/');
+      if (parts.length !== 3) continue;
+      const uuid = parts[1];
+      if (!UUID_RE.test(uuid)) continue;
+
+      const details = await env.AUTH_KV.get(k.name, { type: 'json' }) as any;
+      if (!details || details.public !== true) continue;
+
+      const name = typeof details.shortlistName === 'string' ? details.shortlistName.trim() : '';
+      if (!name) continue;
+
+      out.push({ uuid, shortlistName: name });
+    }
+
+    if (res.list_complete) break;
+  } while (cursor);
+
+  out.sort((a, b) => a.shortlistName.localeCompare(b.shortlistName));
+  return json(req, 200, out);
+}
