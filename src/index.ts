@@ -312,7 +312,22 @@ function parseAccountRoute(pathname: string): { userId: string; resource: (typeo
   return { userId, resource: resource as any };
 }
 
-async function handleAccountGet(req: Request, env: Env, userId: string, resource: (typeof RESOURCES)[number]): Promise<Response> {
+async function handleAccountGet(
+  req: Request,
+  env: Env,
+  userId: string,
+  resource: (typeof RESOURCES)[number]
+): Promise<Response> {
+  // Details are NEVER public
+  if (resource === 'details') {
+    const sub = await requireAuthSub(req, env);
+    if (sub !== userId) return errorJson(req, 403, 'Forbidden');
+
+    const value = (await getAccountResource(env, userId, 'details')) ?? defaultValue('details');
+    return json(req, 200, value as any);
+  }
+
+  // Other resources can be public if details.public === true
   const details = (await getDetails(env, userId)) ?? (defaultValue('details') as any);
   const isPublic = typeof details?.public === 'boolean' ? details.public : false;
 
