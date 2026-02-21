@@ -10,6 +10,8 @@ export interface Env {
   GITHUB_CLIENT_ID: string;
   GH_CLIENT_SECRET: string;
 
+  EMAIL_PACK_HMAC_SECRET: string;
+
   // SMTP creds + config
   MAIL_HOST: string;          // e.g. "smtp.mailgun.org" or "smtp.gmail.com"
   MAIL_PORT: string;          // e.g. "587" (STARTTLS) or "465" (TLS)

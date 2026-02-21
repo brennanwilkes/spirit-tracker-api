@@ -2,7 +2,7 @@ import { RESOURCES, UUID_RE, JWT_TTL_SECONDS, EMAIL_VERIFY_TTL_SECONDS, PASSWORD
 import type { Env, EmailEventPackV1, EmailRuleV1 } from './types';
 import { handleOptions } from './cors';
 import { errorJson, json } from './http';
-import { requireAuthSub } from './auth';
+import { requireAuthSub, requireEmailPackHmac } from './auth';
 import { signJwt, verifyJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
 import { getAccountResource, getDetails, getEmailIndex, keys, putAccountResource, putEmailIndex, defaultValue } from './storage';
@@ -494,7 +494,9 @@ function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: 
 
 
 async function handleEmailPack(req: Request, env: Env): Promise<Response> {
-  // TODO: auth (keep private / internal)
+
+  await requireEmailPackHmac(req, env);
+
   const body = await readJson<any>(req);
   const pack = validateEmailEventPackV1(body);
 
