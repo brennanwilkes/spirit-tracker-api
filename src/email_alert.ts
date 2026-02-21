@@ -100,7 +100,7 @@ function computedBadge(ev: MatchedEmailEvent): { label: string; tone: "best" | "
   if (ev.isCheapestNow) return { label: "BEST PRICE", tone: "best" };
   if (ev.marketNew) return { label: "NEW TO MARKET", tone: "neutral" };
   if (ev.marketReturn) return { label: "MARKET RETURN", tone: "neutral" };
-  if (ev.marketOut) return { label: "MARKET OUT", tone: "neutral" };
+  if (ev.marketOut) return { label: "ACROSS MARKET", tone: "neutral" };
   return null;
 }
 
@@ -126,7 +126,7 @@ function groupTitle(t: EmailEventType): string {
   return String(t);
 }
 
-/* ---------- Summary blurb (own method) ---------- */
+/* ---------- Summary blurb (one flowing paragraph) ---------- */
 
 function getBrandHeuristic(name: string): string {
   const s = String(name || "").trim();
@@ -136,7 +136,7 @@ function getBrandHeuristic(name: string): string {
     .map((w) => w.trim())
     .filter(Boolean);
 
-  const stopWords = new Set([
+  const stop = new Set([
     "single",
     "malt",
     "whisky",
@@ -153,145 +153,121 @@ function getBrandHeuristic(name: string): string {
     "years",
     "yr",
     "yo",
-    "y/o",
+    "ml",
   ]);
 
   const out: string[] = [];
   for (const w of words) {
-    const lw = w.toLowerCase();
     if (/\d/.test(w)) break;
-    if (stopWords.has(lw) && out.length >= 1) break;
+    const lw = w.toLowerCase();
+    if (stop.has(lw) && out.length >= 1) break;
     out.push(w);
     if (out.length >= 3) break;
   }
-  // common two-word brands should still work (Old Forester, Co-op, etc.)
   return out.join(" ").trim();
 }
 
-function buildSummaryBlurb(
-  events: MatchedEmailEvent[],
-  total: number,
-): { html: string; text: string } {
-  const counts: Record<string, number> = { PRICE_DROP: 0, GLOBAL_NEW: 0, GLOBAL_RETURN: 0, OUT_OF_STOCK: 0 };
-  const byStoreNew = new Map<string, number>();
-  const byStoreReturn = new Map<string, number>();
-  const byBrand = new Map<string, number>();
+function joinHumanList(xs: string[]): string {
+  const arr = xs.map((x) => String(x).trim()).filter(Boolean);
+  if (!arr.length) return "";
+  if (arr.length === 1) return arr[0];
+  if (arr.length === 2) return `${arr[0]} and ${arr[1]}`;
+  return `${arr.slice(0, -1).join(", ")}, and ${arr[arr.length - 1]}`;
+}
 
+function buildSummaryParagraph(events: MatchedEmailEvent[], total: number): { html: string; text: string } {
+  const evs = Array.isArray(events) ? events : [];
+
+  // Best deal heuristic: prefer highest % then $.
   let bestDeal: MatchedEmailEvent | null = null;
-  let bestDealScore = -1;
+  let bestPct = -1;
+  let bestAbs = -1;
 
-  for (const ev of events || []) {
-    counts[String(ev.eventType)] = (counts[String(ev.eventType)] || 0) + 1;
+  const storeNew = new Map<string, number>();
+  const storeReturn = new Map<string, number>();
+  const brands = new Map<string, number>();
 
-    // store signals
+  for (const ev of evs) {
+    // stores
     const store = String(ev.storeLabel || "").trim();
     if (store) {
-      if (ev.eventType === "GLOBAL_NEW") byStoreNew.set(store, (byStoreNew.get(store) || 0) + 1);
-      if (ev.eventType === "GLOBAL_RETURN") byStoreReturn.set(store, (byStoreReturn.get(store) || 0) + 1);
+      if (ev.eventType === "GLOBAL_NEW") storeNew.set(store, (storeNew.get(store) || 0) + 1);
+      if (ev.eventType === "GLOBAL_RETURN") storeReturn.set(store, (storeReturn.get(store) || 0) + 1);
     }
 
-    // brand signals
-    const brand = getBrandHeuristic(String(ev.skuName || ""));
-    if (brand) byBrand.set(brand, (byBrand.get(brand) || 0) + 1);
+    // brands
+    const b = getBrandHeuristic(String(ev.skuName || ""));
+    if (b) brands.set(b, (brands.get(b) || 0) + 1);
 
-    // best deal heuristic
+    // best deal
     if (ev.eventType === "PRICE_DROP") {
-      const abs = typeof ev.dropAbs === "number" && Number.isFinite(ev.dropAbs) ? ev.dropAbs : 0;
-      const pct = typeof ev.dropPct === "number" && Number.isFinite(ev.dropPct) ? ev.dropPct : 0;
-      const score = abs * 2 + pct; // weight dollars a bit more
-      if (score > bestDealScore) {
-        bestDealScore = score;
+      const pct = typeof ev.dropPct === "number" && Number.isFinite(ev.dropPct) ? Math.abs(ev.dropPct) : -1;
+      const abs = typeof ev.dropAbs === "number" && Number.isFinite(ev.dropAbs) ? ev.dropAbs : -1;
+      const better = pct > bestPct || (pct === bestPct && abs > bestAbs);
+      if (better) {
         bestDeal = ev;
+        bestPct = pct;
+        bestAbs = abs;
       }
     }
   }
 
-  const introShort =
-    `Tap any bottle to open it. Scroll to the bottom for the full report.`;
-  const introLong =
-    `Lots of movement today. Tap any bottle to open it. Scroll to the bottom for the full report.`;
-
-  const typeLine =
-    `${total} update${total === 1 ? "" : "s"} · ` +
-    `${counts.PRICE_DROP || 0} sale${(counts.PRICE_DROP || 0) === 1 ? "" : "s"}, ` +
-    `${counts.GLOBAL_NEW || 0} just landed, ` +
-    `${counts.GLOBAL_RETURN || 0} back, ` +
-    `${counts.OUT_OF_STOCK || 0} out`;
-
-  function topN(map: Map<string, number>, n: number): Array<{ k: string; v: number }> {
-    return Array.from(map.entries())
+  const topStores = (m: Map<string, number>, n: number) =>
+    Array.from(m.entries())
       .map(([k, v]) => ({ k, v }))
       .sort((a, b) => b.v - a.v || a.k.localeCompare(b.k))
       .slice(0, n);
-  }
 
-  const topNewStores = topN(byStoreNew, 3);
-  const topReturnStores = topN(byStoreReturn, 3);
-  const topBrands = topN(byBrand, 4);
+  const newStores = topStores(storeNew, 3).map((x) => x.k);
+  const returnStores = topStores(storeReturn, 3).map((x) => x.k);
+  const topBrands = Array.from(brands.entries())
+    .map(([k, v]) => ({ k, v }))
+    .sort((a, b) => b.v - a.v || a.k.localeCompare(b.k))
+    .slice(0, 3)
+    .map((x) => x.k);
 
-  const dealLine = bestDeal
-    ? (() => {
-        const name = bestDeal.skuName || `(SKU ${bestDeal.sku})`;
-        const store = String(bestDeal.storeLabel || "").trim();
-        const saveAbs = fmtSaveAbsWhole(bestDeal.dropAbs);
-        const savePct = fmtPctWhole(bestDeal.dropPct);
-        const best = bestDeal.isCheapestNow ? " (best price)" : "";
-        const save = [saveAbs, savePct ? `(${savePct})` : ""].filter(Boolean).join(" ");
-        return `Best deal: ${name} — save ${save || "?"}${store ? ` at ${store}` : ""}${best}.`;
-      })()
-    : "";
-
-  const newStoresLine =
-    topNewStores.length
-      ? `Just landed: ${topNewStores.map((x) => `${x.k} (${x.v})`).join(", ")}.`
-      : "";
-
-  const returnStoresLine =
-    topReturnStores.length
-      ? `Back in stock: ${topReturnStores.map((x) => `${x.k} (${x.v})`).join(", ")}.`
-      : "";
-
-  const brandsLine =
-    topBrands.length
-      ? `Trending: ${topBrands.map((x) => x.k).join(", ")}.`
-      : "";
-
-  const longTextParts = [
-    typeLine + ".",
-    dealLine,
-    newStoresLine,
-    returnStoresLine,
-    brandsLine,
-    introLong,
-  ].filter(Boolean);
-
-  const shortTextParts = [
-    typeLine + ".",
-    introShort,
-  ].filter(Boolean);
-
-  const longHtml = `
-<div style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.6;">
-  <div style="font-weight:800;color:#0f172a;margin-bottom:4px;">${escHtml(typeLine)}</div>
-  ${dealLine ? `<div style="margin-top:6px;">${escHtml(dealLine)}</div>` : ""}
-  ${newStoresLine ? `<div style="margin-top:6px;">${escHtml(newStoresLine)}</div>` : ""}
-  ${returnStoresLine ? `<div style="margin-top:6px;">${escHtml(returnStoresLine)}</div>` : ""}
-  ${brandsLine ? `<div style="margin-top:6px;">${escHtml(brandsLine)}</div>` : ""}
-  <div style="margin-top:10px;">Tap any bottle to open it. Scroll to the bottom for the full report.</div>
-</div>
-  `.trim();
-
-  const shortHtml = `
-<div style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.6;">
-  <div style="font-weight:800;color:#0f172a;margin-bottom:6px;">${escHtml(typeLine)}</div>
-  <div>Tap any bottle to open it. Scroll to the bottom for the full report.</div>
-</div>
-  `.trim();
+  const sentences: string[] = [];
 
   if (total > 10) {
-    return { html: longHtml, text: longTextParts.join("\n") };
+    sentences.push(`Here’s a quick skim before you dive in.`);
+    if (bestDeal) {
+      const name = bestDeal.skuName || `(SKU ${bestDeal.sku})`;
+      const store = String(bestDeal.storeLabel || "").trim();
+      const oldP = String(bestDeal.oldPrice || "").trim();
+      const newP = String(bestDeal.newPrice || "").trim();
+      const saveAbs = fmtSaveAbsWhole(bestDeal.dropAbs);
+      const savePct = fmtPctWhole(bestDeal.dropPct);
+      const save = [saveAbs, savePct ? `(${savePct})` : ""].filter(Boolean).join(" ");
+      const priceBit =
+        oldP && newP ? `${oldP} → ${newP}` : newP ? `now ${newP}` : "";
+      const storeBit = store ? ` at ${store}` : "";
+      const bestBit = bestDeal.isCheapestNow ? ` — and it’s the best price right now.` : ".";
+      const core = `The best-looking deal is ${name}${storeBit}${priceBit ? ` (${priceBit})` : ""}${save ? `, saving ${save}` : ""}`;
+      sentences.push(core + bestBit);
+    }
+    if (newStores.length) {
+      sentences.push(`New bottles showed up at ${joinHumanList(newStores)}.`);
+    }
+    if (returnStores.length) {
+      sentences.push(`A few things also came back in stock at ${joinHumanList(returnStores)}.`);
+    }
+    if (topBrands.length) {
+      sentences.push(`Notables in this batch include ${joinHumanList(topBrands)}.`);
+    }
+    sentences.push(`Tap any bottle to open it, and scroll to the bottom for the full report.`);
+  } else {
+    sentences.push(`Tap any bottle to open it, and scroll to the bottom for the full report.`);
   }
-  return { html: shortHtml, text: shortTextParts.join("\n") };
+
+  const paragraph = sentences.join(" ").replace(/\s+/g, " ").trim();
+
+  const html = `
+<div style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.6;">
+  ${escHtml(paragraph)}
+</div>
+  `.trim();
+
+  return { html, text: paragraph };
 }
 
 /* ---------- Price rendering ---------- */
@@ -377,22 +353,18 @@ function renderEventCard(ev: MatchedEmailEvent): string {
             </td>
 
             <td valign="top" style="padding:0;">
-              <!-- more even: top stack + badges anchored near bottom, but without big "space-between" gaps -->
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="height:72px;">
-                <tr>
-                  <td valign="top" style="padding:0;">
-                    ${store ? `<div style="font-size:13px;color:#475569;line-height:1.25;">${escHtml(store)}</div>` : ""}
-                    ${priceHtml ? `<div style="margin-top:6px;">${priceHtml}</div>` : ""}
-                  </td>
-                </tr>
-                <tr>
-                  <td valign="bottom" style="padding:0;">
-                    <div style="margin-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                      ${pills.join("")}
-                    </div>
-                  </td>
-                </tr>
-              </table>
+              ${
+                store
+                  ? `<div style="font-size:13px;color:#475569;line-height:1.25;font-weight:700;margin:0 0 6px;">${escHtml(
+                      store,
+                    )}</div>`
+                  : ""
+              }
+              ${priceHtml ? `<div style="margin:0 0 10px;">${priceHtml}</div>` : `<div style="margin:0 0 10px;"></div>`}
+
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${pills.join("")}
+              </div>
             </td>
 
           </tr>
@@ -427,9 +399,9 @@ export function buildEmailAlert(
   const shaShort = shaFull ? shaFull.slice(0, 12) : "unknown";
   const reportHref = shaFull ? commitUrl(shaFull) : REPO;
 
-  const blurb = buildSummaryBlurb(job.events || [], total);
+  const blurb = buildSummaryParagraph(job.events || [], total);
 
-  // text (minimal-ish but useful)
+  // text (keep it useful but not spammy)
   const lines: string[] = [];
   lines.push(`Spirit Tracker`);
   lines.push(`${total} update${s}`);
@@ -492,9 +464,12 @@ export function buildEmailAlert(
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td valign="middle" style="padding-right:10px;white-space:nowrap;">
-            <a href="${escHtml(reportHref)}" style="color:#0f172a;text-decoration:none;font-size:13px;font-weight:900;">
-              Commit: <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escHtml(shaShort)}</span>
-            </a>
+            <span style="font-size:13px;color:#0f172a;font-weight:800;">
+              Commit:
+              <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:900;">${escHtml(
+                shaShort,
+              )}</span>
+            </span>
           </td>
           <td valign="middle" align="right" style="white-space:nowrap;">
             <a href="${escHtml(reportHref)}"
