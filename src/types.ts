@@ -26,11 +26,39 @@ export type EmailIndex = {
   verifiedAt?: string;
 };
 
-// types.ts
+
+export type Score = Record<string, number>;
+
+export type EmailEventType =
+  | "IN_STOCK"
+  | "OUT_OF_STOCK"
+  | "PRICE_DROP"
+  | "GLOBAL_NEW"
+  | "GLOBAL_RETURN";
+
+export type EmailRuleV1 = {
+  id: string; // uuid
+  enabled: boolean;
+  scope: "all" | "shortlist";
+  eventType: EmailEventType;
+  filters?: {
+    keywordsAny?: string[];
+    keywordsNone?: string[];
+    // PRICE_DROP only
+    minDropAbs?: number;        // dollars
+    minDropPct?: number;        // 0..100
+    requireCheapestNow?: boolean;
+  };
+};
+
+export type EmailNotificationsV1 = {
+  version: 1;
+  rules: EmailRuleV1[];
+};
+
 export type Details = {
   public: boolean;
   shortlistName?: string;
+  emailNotifications?: EmailNotificationsV1;
   [k: string]: unknown;
 };
-
-export type Score = Record<string, number>;

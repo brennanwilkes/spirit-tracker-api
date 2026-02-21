@@ -1,6 +1,6 @@
 // src/validate.ts
 
-import type { Details, Score } from "./types";
+import type { Details, Score, EmailNotificationsV1, EmailRuleV1, EmailEventType } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
@@ -10,6 +10,12 @@ const MAX_TEXT = 64;        // shortlistName max length
 const MAX_KEY = 256;        // max key length
 const SKU_RE = /^[A-Za-z0-9:]+$/; // SKU format constraint
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_RULES = 50;
+const MAX_KW = 16;
+const MAX_KW_LEN = 40;
+
+const EVENT_TYPES: EmailEventType[] = ["IN_STOCK","OUT_OF_STOCK","PRICE_DROP","GLOBAL_NEW","GLOBAL_RETURN"];
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -79,6 +85,107 @@ export function validatePasswordResetConfirm(body: any): { token: string; passwo
 }
 
 
+// ////////////////
+
+function sanitizeKeyword(s: unknown): string | null {
+  const clean = sanitizeUserText(String(s ?? ""), MAX_KW_LEN);
+  if (!clean) return null;
+  return clean;
+}
+
+function uniqStrings(arr: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const s of arr) {
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+function validateEmailRuleV1(x: any): EmailRuleV1 {
+  if (!x || typeof x !== "object" || Array.isArray(x)) throw new Error("emailNotifications.rules[] must be objects");
+
+  const id = String(x.id || "").trim();
+  if (!UUID_RE.test(id)) throw new Error("emailNotifications.rules[].id must be uuid");
+
+  const enabled = x.enabled;
+  if (typeof enabled !== "boolean") throw new Error("emailNotifications.rules[].enabled must be boolean");
+
+  const scope = String(x.scope || "");
+  if (scope !== "all" && scope !== "shortlist") throw new Error("emailNotifications.rules[].scope must be all|shortlist");
+
+  const eventType = String(x.eventType || "") as EmailEventType;
+  if (!EVENT_TYPES.includes(eventType)) throw new Error("emailNotifications.rules[].eventType invalid");
+
+  const filtersIn = x.filters;
+  let filters: EmailRuleV1["filters"] | undefined = undefined;
+
+  if (filtersIn != null) {
+    if (!filtersIn || typeof filtersIn !== "object" || Array.isArray(filtersIn)) {
+      throw new Error("emailNotifications.rules[].filters must be object");
+    }
+
+    const kwAnyRaw = Array.isArray(filtersIn.keywordsAny) ? filtersIn.keywordsAny : [];
+    const kwNoneRaw = Array.isArray(filtersIn.keywordsNone) ? filtersIn.keywordsNone : [];
+
+    const kwAny = uniqStrings(
+      kwAnyRaw.map(sanitizeKeyword).filter((v): v is string => !!v).slice(0, MAX_KW)
+    );
+    const kwNone = uniqStrings(
+      kwNoneRaw.map(sanitizeKeyword).filter((v): v is string => !!v).slice(0, MAX_KW)
+    );
+
+    const out: any = {};
+    if (kwAny.length) out.keywordsAny = kwAny;
+    if (kwNone.length) out.keywordsNone = kwNone;
+
+    if (eventType === "PRICE_DROP") {
+      if (filtersIn.minDropAbs != null) {
+        const n = Number(filtersIn.minDropAbs);
+        if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error("minDropAbs must be number >= 0");
+        out.minDropAbs = n;
+      }
+      if (filtersIn.minDropPct != null) {
+        const n = Number(filtersIn.minDropPct);
+        if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error("minDropPct must be number 0..100");
+        out.minDropPct = n;
+      }
+      if (filtersIn.requireCheapestNow != null) {
+        if (typeof filtersIn.requireCheapestNow !== "boolean") throw new Error("requireCheapestNow must be boolean");
+        out.requireCheapestNow = filtersIn.requireCheapestNow;
+      }
+    }
+
+    if (Object.keys(out).length) filters = out;
+  }
+
+  return { id, enabled, scope: scope as any, eventType, ...(filters ? { filters } : {}) };
+}
+
+function validateEmailNotificationsV1(v: any): EmailNotificationsV1 {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("details.emailNotifications must be an object");
+  const version = Number(v.version);
+  if (version !== 1) throw new Error("details.emailNotifications.version must be 1");
+
+  const rulesIn = v.rules;
+  if (!Array.isArray(rulesIn)) throw new Error("details.emailNotifications.rules must be an array");
+
+  const rules: EmailRuleV1[] = [];
+  const seen = new Set<string>();
+  for (const r of rulesIn.slice(0, MAX_RULES)) {
+    const rr = validateEmailRuleV1(r);
+    if (seen.has(rr.id)) continue;
+    seen.add(rr.id);
+    rules.push(rr);
+  }
+
+  return { version: 1, rules };
+}
+
+
 /* -------------------------------------------------------------------------- */
 /* Account resources                                                          */
 /* -------------------------------------------------------------------------- */
@@ -92,22 +199,26 @@ export function validateDetails(body: any): Details {
     throw new Error("details.public must be boolean");
   }
 
-  // shortlistName (optional)
   if ("shortlistName" in body) {
-    if (body.shortlistName == null) {
-      delete body.shortlistName;
-    } else if (typeof body.shortlistName !== "string") {
-      throw new Error("details.shortlistName must be a string");
-    } else {
+    if (body.shortlistName == null) delete body.shortlistName;
+    else if (typeof body.shortlistName !== "string") throw new Error("details.shortlistName must be a string");
+    else {
       const clean = sanitizeUserText(body.shortlistName, MAX_TEXT);
       if (!clean) delete body.shortlistName;
       else body.shortlistName = clean;
     }
   }
 
+  if ("emailNotifications" in body) {
+    if (body.emailNotifications == null) {
+      delete body.emailNotifications;
+    } else {
+      body.emailNotifications = validateEmailNotificationsV1(body.emailNotifications);
+    }
+  }
+
   return body as Details;
 }
-
 export function validateStringArray(body: any, name: string): string[] {
   if (!Array.isArray(body)) {
     throw new Error(`${name} must be an array`);

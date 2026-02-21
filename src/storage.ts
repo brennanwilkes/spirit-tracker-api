@@ -38,7 +38,11 @@ export async function getAccountResource(env: Env, userId: string, resource: Res
 export function defaultValue(resource: Resource): unknown {
   switch (resource) {
     case 'details':
-      return { public: false, shortlistName: "" };
+      return {
+        public: false,
+        shortlistName: "",
+        emailNotifications: { version: 1, rules: [] },
+      };
     case 'favourites':
     case 'sampled':
       return [];
