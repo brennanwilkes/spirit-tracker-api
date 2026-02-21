@@ -103,7 +103,6 @@ export type EmailPackEventV1 = {
   baseInStockCount: number;
   headInStockCount: number;
 
-  // PRICE_DROP only
   oldPrice?: string;
   newPrice?: string;
   dropAbs?: number;

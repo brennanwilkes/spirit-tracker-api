@@ -422,6 +422,10 @@ export function validateEmailEventPackV1(body: any): EmailEventPackV1 {
       headInStockCount,
     };
 
+    if (eventType !== "PRICE_DROP") {
+      if (typeof e.newPrice === "string") out.newPrice = e.newPrice;
+    }
+
     if (eventType === "PRICE_DROP") {
       if (typeof e.oldPrice === "string") out.oldPrice = e.oldPrice;
       if (typeof e.newPrice === "string") out.newPrice = e.newPrice;

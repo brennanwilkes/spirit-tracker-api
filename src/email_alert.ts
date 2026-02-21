@@ -342,7 +342,7 @@ function renderEventCard(ev: MatchedEmailEvent): string {
       <td style="padding:12px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td width="72" valign="top" style="width:72px;padding-right:12px;">
+            <td width="72" valign="middle" style="width:72px;padding-right:12px;vertical-align:middle;">
               ${
                 img
                   ? `<img src="${escHtml(img)}" width="72" height="72" alt="${escHtml(
