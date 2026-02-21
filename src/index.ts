@@ -1,12 +1,12 @@
 import { RESOURCES, UUID_RE, JWT_TTL_SECONDS, EMAIL_VERIFY_TTL_SECONDS, PASSWORD_RESET_TTL_SECONDS } from './constants';
-import type { Env } from './types';
+import type { Env, EmailEventPackV1, EmailRuleV1 } from './types';
 import { handleOptions } from './cors';
 import { errorJson, json } from './http';
 import { requireAuthSub } from './auth';
 import { signJwt, verifyJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
 import { getAccountResource, getDetails, getEmailIndex, keys, putAccountResource, putEmailIndex, defaultValue } from './storage';
-import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, validatePasswordResetConfirm, validateScore, validateStringArray, validateBoolMap, validateScorePatch, normalizeEmail } from './validate';
+import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, validatePasswordResetConfirm, validateScore, validateStringArray, validateBoolMap, validateScorePatch, normalizeEmail, validateEmailEventPackV1 } from './validate';
 import { handleOauth } from './oauth';
 import { sendMailSmtp } from './smtp';
 
@@ -300,6 +300,286 @@ async function handlePasswordResetConfirm(req: Request, env: Env): Promise<Respo
   return json(req, 200, { ok: true });
 }
 
+
+type MatchedEmailEvent = {
+  eventId: string;
+  marketId: string;
+  eventType: string;
+
+  sku: string;
+  skuName: string;
+  skuImg: string;
+
+  storeId: string;
+  storeLabel: string;
+  listingUrl: string;
+
+  marketNew: boolean;
+  marketReturn: boolean;
+  marketOut: boolean;
+
+  oldPrice?: string;
+  newPrice?: string;
+  dropAbs?: number;
+  dropPct?: number | null;
+  isCheapestNow?: boolean;
+
+  matchedRuleIds: string[];
+};
+
+function lc(s: unknown): string {
+  return String(s ?? "").toLowerCase();
+}
+
+function ruleAcrossMarket(rule: EmailRuleV1): boolean {
+  const f = rule.filters || {};
+  if (rule.eventType === "PRICE_DROP") return false;
+
+  if (typeof f.acrossMarket === "boolean") return f.acrossMarket;
+
+  // Default: GLOBAL_NEW across-market unless explicitly turned off
+  if (rule.eventType === "GLOBAL_NEW") return true;
+
+  // Default: others off unless enabled
+  return false;
+}
+
+function skuInShortlist(pack: EmailEventPackV1, canonSku: string, favs: Set<string>): boolean {
+  if (!favs.size) return false;
+
+  const s = pack.skus[canonSku];
+  if (!s) return false;
+
+  if (favs.has(s.sku)) return true;
+  for (const m of Array.isArray(s.members) ? s.members : []) {
+    if (favs.has(m)) return true;
+  }
+  return false;
+}
+
+function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, favs: Set<string>): boolean {
+  if (!rule.enabled) return false;
+  if (ev.eventType !== rule.eventType) return false;
+
+  const skuObj = pack.skus[ev.sku];
+  const skuName = skuObj?.name || "";
+  const nameL = lc(skuName);
+
+  // scope
+  if (rule.scope === "shortlist") {
+    if (!skuInShortlist(pack, ev.sku, favs)) return false;
+  }
+
+  const f = rule.filters || {};
+
+  // store filter
+  if (typeof f.storeId === "string" && f.storeId.trim()) {
+    if (String(ev.storeId || "") !== f.storeId.trim()) return false;
+  }
+
+  // keyword filters (substring, case-insensitive)
+  if (Array.isArray(f.keywordsAny) && f.keywordsAny.length) {
+    const ok = f.keywordsAny.some((k) => {
+      const kk = lc(k).trim();
+      return kk ? nameL.includes(kk) : false;
+    });
+    if (!ok) return false;
+  }
+
+  if (Array.isArray(f.keywordsNone) && f.keywordsNone.length) {
+    const bad = f.keywordsNone.some((k) => {
+      const kk = lc(k).trim();
+      return kk ? nameL.includes(kk) : false;
+    });
+    if (bad) return false;
+  }
+
+  // acrossMarket semantics for the 3 event types
+  const across = ruleAcrossMarket(rule);
+  if (across) {
+    if (rule.eventType === "GLOBAL_NEW" && ev.marketNew !== true) return false;
+    if (rule.eventType === "GLOBAL_RETURN" && ev.marketReturn !== true) return false;
+    if (rule.eventType === "OUT_OF_STOCK" && ev.marketOut !== true) return false;
+  }
+
+  // PRICE_DROP filters
+  if (rule.eventType === "PRICE_DROP") {
+    const dropAbs = typeof ev.dropAbs === "number" ? ev.dropAbs : NaN;
+    const dropPct = typeof ev.dropPct === "number" ? ev.dropPct : NaN;
+
+    if (typeof f.minDropAbs === "number" && Number.isFinite(f.minDropAbs)) {
+      if (!Number.isFinite(dropAbs) || dropAbs < f.minDropAbs) return false;
+    }
+    if (typeof f.minDropPct === "number" && Number.isFinite(f.minDropPct)) {
+      if (!Number.isFinite(dropPct) || dropPct < f.minDropPct) return false;
+    }
+    if (f.requireCheapestNow === true && ev.isCheapestNow !== true) return false;
+  }
+
+  return true;
+}
+
+function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: Set<string>): MatchedEmailEvent[] {
+  const byId = new Map<string, MatchedEmailEvent>();        // store-level (acrossMarket=false)
+  const byMarket = new Map<string, MatchedEmailEvent>();    // market-level (acrossMarket=true)
+
+  for (const rule of rules) {
+    if (!rule?.enabled) continue;
+
+    const across = ruleAcrossMarket(rule);
+
+    for (const ev of pack.events) {
+      if (!ruleMatchesEvent(pack, rule, ev, favs)) continue;
+
+      const skuObj = pack.skus[ev.sku];
+      const m: MatchedEmailEvent = {
+        eventId: String(ev.id || ""),
+        marketId: String(ev.marketId || ""),
+        eventType: String(ev.eventType || ""),
+        sku: String(ev.sku || ""),
+        skuName: String(skuObj?.name || ""),
+        skuImg: String(skuObj?.img || ""),
+        storeId: String(ev.storeId || ""),
+        storeLabel: String(ev.storeLabel || ""),
+        listingUrl: String(ev.listingUrl || ""),
+        marketNew: ev.marketNew === true,
+        marketReturn: ev.marketReturn === true,
+        marketOut: ev.marketOut === true,
+
+        oldPrice: typeof (ev as any).oldPrice === "string" ? (ev as any).oldPrice : undefined,
+        newPrice: typeof (ev as any).newPrice === "string" ? (ev as any).newPrice : undefined,
+        dropAbs: typeof (ev as any).dropAbs === "number" ? (ev as any).dropAbs : undefined,
+        dropPct: typeof (ev as any).dropPct === "number" || (ev as any).dropPct === null ? (ev as any).dropPct : undefined,
+        isCheapestNow: (ev as any).isCheapestNow === true,
+
+        matchedRuleIds: [rule.id],
+      };
+
+      if (across) {
+        const key = m.marketId || `${m.eventType}|${m.sku}`;
+        const cur = byMarket.get(key);
+        if (!cur) {
+          byMarket.set(key, m);
+        } else if (!cur.matchedRuleIds.includes(rule.id)) {
+          cur.matchedRuleIds.push(rule.id);
+        }
+      } else {
+        const key = m.eventId || `${m.eventType}|${m.sku}|${m.storeId}`;
+        const cur = byId.get(key);
+        if (!cur) {
+          byId.set(key, m);
+        } else if (!cur.matchedRuleIds.includes(rule.id)) {
+          cur.matchedRuleIds.push(rule.id);
+        }
+      }
+    }
+  }
+
+  // Prefer store-level specificity: only include market-level rows for markets not already represented by store-level matches.
+  const marketIdsFromStore = new Set(Array.from(byId.values()).map((x) => x.marketId).filter(Boolean));
+  const marketOnly = Array.from(byMarket.values()).filter((x) => !marketIdsFromStore.has(x.marketId));
+
+  const out = marketOnly.concat(Array.from(byId.values()));
+
+  out.sort((a, b) => {
+    const t = a.eventType.localeCompare(b.eventType);
+    if (t) return t;
+    const n = a.skuName.localeCompare(b.skuName);
+    if (n) return n;
+    return a.storeId.localeCompare(b.storeId);
+  });
+
+  return out;
+}
+
+async function handleEmailNotificationsEvaluatePack(req: Request, env: Env): Promise<Response> {
+  // TODO: auth (keep this endpoint private/internal)
+  const body = await readJson<any>(req);
+  const pack = validateEmailEventPackV1(body);
+
+  const url = new URL(req.url);
+  const onlyUserId = (url.searchParams.get("userId") || "").trim();
+
+  const accountsOut: Array<{
+    userId: string;
+    email: string;
+    shortlistName: string;
+    eventCount: number;
+    events: MatchedEmailEvent[];
+  }> = [];
+
+  let scannedAccounts = 0;
+  let matchedAccounts = 0;
+
+  let cursor: string | undefined = undefined;
+  do {
+    const res = await env.AUTH_KV.list({ prefix: "acct/", cursor, limit: 1000 });
+    cursor = res.cursor;
+
+    for (const k of res.keys) {
+      if (!k.name.endsWith("/details")) continue;
+
+      const parts = k.name.split("/");
+      if (parts.length !== 3) continue;
+
+      const userId = parts[1];
+      if (!UUID_RE.test(userId)) continue;
+      if (onlyUserId && userId !== onlyUserId) continue;
+
+      scannedAccounts++;
+
+      const details = (await env.AUTH_KV.get(k.name, { type: "json" })) as any;
+      if (!details || typeof details !== "object") continue;
+
+      const email = typeof details.email === "string" ? details.email.trim() : "";
+      if (!email || !email.includes("@")) continue;
+
+      const en = details.emailNotifications;
+      if (!en || typeof en !== "object" || Number(en.version) !== 1 || !Array.isArray(en.rules)) continue;
+
+      const rules: EmailRuleV1[] = en.rules.filter((r: any) => r && r.enabled === true);
+      if (!rules.length) continue;
+
+      const needsShortlist = rules.some((r) => r.scope === "shortlist");
+      const favs = new Set<string>();
+      if (needsShortlist) {
+        const favArr = await getAccountResource(env, userId, "favourites");
+        if (Array.isArray(favArr)) {
+          for (const x of favArr) if (typeof x === "string" && x.trim()) favs.add(x.trim());
+        }
+      }
+
+      const matched = matchEventsForUser(pack, rules, favs);
+      if (!matched.length) continue;
+
+      matchedAccounts++;
+      accountsOut.push({
+        userId,
+        email,
+        shortlistName: typeof details.shortlistName === "string" ? details.shortlistName : "",
+        eventCount: matched.length,
+        events: matched,
+      });
+    }
+
+    if (res.list_complete) break;
+  } while (cursor);
+
+  const result = {
+    ok: true,
+    pack: { generatedAt: pack.generatedAt, range: pack.range, stats: pack.stats },
+    scannedAccounts,
+    matchedAccounts,
+    accounts: accountsOut,
+  };
+
+  console.log(JSON.stringify(result, null, 2)); // requested: ok for now
+
+  // TODO: build + send emails from `result.accounts`
+  return json(req, 200, result);
+}
+
+
 function parseAccountRoute(pathname: string): { userId: string; resource: (typeof RESOURCES)[number] } | null {
   const clean = trimTrailingSlashes(pathname);
   const parts = clean.split('/').filter(Boolean);
@@ -408,6 +688,11 @@ async function router(req: Request, env: Env): Promise<Response> {
   if (pathname === '/password-reset/confirm') {
     if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
     return handlePasswordResetConfirm(req, env);
+  }
+
+  if (pathname === '/email') {
+    if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
+    return handleEmailNotificationsEvaluatePack(req, env);
   }
 
   const acct = parseAccountRoute(pathname);

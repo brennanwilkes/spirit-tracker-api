@@ -1,6 +1,6 @@
 // src/validate.ts
 
-import type { Details, Score, EmailNotificationsV1, EmailRuleV1, EmailEventType } from "./types";
+import type { Details, Score, EmailNotificationsV1, EmailRuleV1, EmailEventType, EmailEventPackV1, EmailPackEventV1, EmailPackSkuV1 } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
@@ -319,4 +319,129 @@ export function validateScorePatch(body: any): ScorePatch {
   }
 
   return out;
+}
+
+export function validateEmailEventPackV1(body: any): EmailEventPackV1 {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("email event pack must be an object");
+  }
+
+  const version = Number(body.version);
+  if (version !== 1) throw new Error("email event pack version must be 1");
+
+  const generatedAt = typeof body.generatedAt === "string" ? body.generatedAt.trim() : "";
+  if (!generatedAt) throw new Error("email event pack generatedAt must be string");
+
+  const skusIn = body.skus;
+  if (!skusIn || typeof skusIn !== "object" || Array.isArray(skusIn)) {
+    throw new Error("email event pack skus must be an object");
+  }
+
+  const eventsIn = body.events;
+  if (!Array.isArray(eventsIn)) {
+    throw new Error("email event pack events must be an array");
+  }
+
+  const skus: Record<string, EmailPackSkuV1> = {};
+  for (const [k0, v] of Object.entries(skusIn as Record<string, any>)) {
+    const k = assertSku(k0, "skus keys");
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+
+    const sku = assertSku(v.sku ?? k, "skus[].sku");
+    const name = typeof v.name === "string" ? v.name.trim() : "";
+    const img = typeof v.img === "string" ? v.img.trim() : "";
+
+    const membersIn = Array.isArray(v.members) ? v.members : [];
+    const members = membersIn
+      .map((m: any) => {
+        try { return assertSku(m, "skus[].members"); } catch { return ""; }
+      })
+      .filter(Boolean)
+      .slice(0, 256);
+
+    const pr = v.priceRangeNow;
+    const priceRangeNow =
+      pr && typeof pr === "object" && !Array.isArray(pr) &&
+      typeof pr.min === "number" && Number.isFinite(pr.min) &&
+      typeof pr.max === "number" && Number.isFinite(pr.max)
+        ? { min: pr.min, max: pr.max }
+        : null;
+
+    const cn = v.cheapestNow;
+    const cheapestNow =
+      cn && typeof cn === "object" && !Array.isArray(cn) &&
+      typeof cn.priceNum === "number" && Number.isFinite(cn.priceNum) &&
+      Array.isArray(cn.storeIds)
+        ? { priceNum: cn.priceNum, storeIds: cn.storeIds.filter((x: any) => typeof x === "string").slice(0, 64) }
+        : null;
+
+    const offersIn = Array.isArray(v.offersNow) ? v.offersNow : [];
+    const offersNow = offersIn.slice(0, 256).map((o: any) => ({
+      storeId: typeof o?.storeId === "string" ? o.storeId : "",
+      storeLabel: typeof o?.storeLabel === "string" ? o.storeLabel : "",
+      url: typeof o?.url === "string" ? o.url : "",
+      price: typeof o?.price === "string" ? o.price : "",
+      priceNum: typeof o?.priceNum === "number" && Number.isFinite(o.priceNum) ? o.priceNum : null,
+    }));
+
+    skus[k] = { sku, name, img, members, priceRangeNow, cheapestNow, offersNow };
+  }
+
+  const events: EmailPackEventV1[] = [];
+  for (const e of eventsIn.slice(0, 50000)) {
+    if (!e || typeof e !== "object" || Array.isArray(e)) continue;
+
+    const eventType = String(e.eventType || "") as EmailEventType;
+    if (!EVENT_TYPES.includes(eventType)) continue;
+
+    const id = typeof e.id === "string" ? e.id.trim() : "";
+    const marketId = typeof e.marketId === "string" ? e.marketId.trim() : "";
+    const sku = assertSku(e.sku, "events[].sku");
+
+    const storeId = typeof e.storeId === "string" ? e.storeId.trim() : "";
+    if (storeId && !STORE_ID_RE.test(storeId)) continue;
+
+    const storeLabel = typeof e.storeLabel === "string" ? e.storeLabel : "";
+    const listingUrl = typeof e.listingUrl === "string" ? e.listingUrl : "";
+
+    const baseInStockCount = typeof e.baseInStockCount === "number" && Number.isFinite(e.baseInStockCount) ? e.baseInStockCount : 0;
+    const headInStockCount = typeof e.headInStockCount === "number" && Number.isFinite(e.headInStockCount) ? e.headInStockCount : 0;
+
+    const out: EmailPackEventV1 = {
+      id,
+      marketId,
+      eventType,
+      sku,
+      storeId,
+      storeLabel,
+      listingUrl,
+      marketNew: !!e.marketNew,
+      marketReturn: !!e.marketReturn,
+      marketOut: !!e.marketOut,
+      baseInStockCount,
+      headInStockCount,
+    };
+
+    if (eventType === "PRICE_DROP") {
+      if (typeof e.oldPrice === "string") out.oldPrice = e.oldPrice;
+      if (typeof e.newPrice === "string") out.newPrice = e.newPrice;
+      if (typeof e.dropAbs === "number" && Number.isFinite(e.dropAbs)) out.dropAbs = e.dropAbs;
+      if (typeof e.dropPct === "number" && Number.isFinite(e.dropPct)) out.dropPct = e.dropPct;
+      else if (e.dropPct === null) out.dropPct = null;
+      out.isCheapestNow = e.isCheapestNow === true;
+    }
+
+    events.push(out);
+  }
+
+  return {
+    version: 1,
+    generatedAt,
+    range: body.range && typeof body.range === "object" && !Array.isArray(body.range)
+      ? { fromSha: String(body.range.fromSha || ""), toSha: String(body.range.toSha || "") }
+      : undefined,
+    stats: body.stats,
+    skus,
+    events,
+  };
 }

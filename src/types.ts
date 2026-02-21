@@ -65,3 +65,55 @@ export type Details = {
   emailNotifications?: EmailNotificationsV1;
   [k: string]: unknown;
 };
+
+export type EmailPackOfferV1 = {
+  storeId: string;
+  storeLabel: string;
+  url: string;
+  price: string;
+  priceNum: number | null;
+};
+
+export type EmailPackSkuV1 = {
+  sku: string;
+  name: string;
+  img: string;
+  members: string[];
+  priceRangeNow: { min: number; max: number } | null;
+  cheapestNow: { priceNum: number; storeIds: string[] } | null;
+  offersNow: EmailPackOfferV1[];
+};
+
+export type EmailPackEventV1 = {
+  id: string;
+  marketId: string; // eventType|sku
+  eventType: EmailEventType;
+  sku: string;
+
+  storeId: string;
+  storeLabel: string;
+  listingUrl: string;
+
+  // market indicators
+  marketNew: boolean;
+  marketReturn: boolean;
+  marketOut: boolean;
+  baseInStockCount: number;
+  headInStockCount: number;
+
+  // PRICE_DROP only
+  oldPrice?: string;
+  newPrice?: string;
+  dropAbs?: number;
+  dropPct?: number | null;
+  isCheapestNow?: boolean;
+};
+
+export type EmailEventPackV1 = {
+  version: 1;
+  generatedAt: string;
+  range?: { fromSha: string; toSha: string };
+  stats?: any;
+  skus: Record<string, EmailPackSkuV1>;
+  events: EmailPackEventV1[];
+};
