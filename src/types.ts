@@ -42,15 +42,19 @@ export type EmailRuleV1 = {
   scope: "all" | "shortlist";
   eventType: EmailEventType;
   filters?: {
+    // NEW
+    storeId?: string;          // e.g. "kwm"
+    acrossMarket?: boolean;    // apply to all stores (same bottle)
+
     keywordsAny?: string[];
     keywordsNone?: string[];
+
     // PRICE_DROP only
     minDropAbs?: number;        // dollars
     minDropPct?: number;        // 0..100
     requireCheapestNow?: boolean;
   };
 };
-
 export type EmailNotificationsV1 = {
   version: 1;
   rules: EmailRuleV1[];

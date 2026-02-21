@@ -16,6 +16,7 @@ const MAX_KW = 16;
 const MAX_KW_LEN = 40;
 
 const EVENT_TYPES: EmailEventType[] = ["IN_STOCK","OUT_OF_STOCK","PRICE_DROP","GLOBAL_NEW","GLOBAL_RETURN"];
+const STORE_ID_RE = /^[a-z0-9_-]{1,64}$/;
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -141,6 +142,19 @@ function validateEmailRuleV1(x: any): EmailRuleV1 {
     const out: any = {};
     if (kwAny.length) out.keywordsAny = kwAny;
     if (kwNone.length) out.keywordsNone = kwNone;
+
+    // store filter
+    if (filtersIn.storeId != null) {
+      const s = String(filtersIn.storeId || "").trim();
+      if (!s || !STORE_ID_RE.test(s)) throw new Error("storeId must be a small slug");
+      out.storeId = s;
+    }
+
+    // across market
+    if (filtersIn.acrossMarket != null) {
+      if (typeof filtersIn.acrossMarket !== "boolean") throw new Error("acrossMarket must be boolean");
+      if (filtersIn.acrossMarket) out.acrossMarket = true;
+    }
 
     if (eventType === "PRICE_DROP") {
       if (filtersIn.minDropAbs != null) {
