@@ -492,55 +492,52 @@ function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: 
   return out;
 }
 
-async function handleEmailNotificationsEvaluatePack(req: Request, env: Env): Promise<Response> {
-  // TODO: auth (keep this endpoint private/internal)
+
+async function handleEmailPack(req: Request, env: Env): Promise<Response> {
+  // TODO: auth (keep private / internal)
   const body = await readJson<any>(req);
   const pack = validateEmailEventPackV1(body);
 
-  const url = new URL(req.url);
-  const onlyUserId = (url.searchParams.get("userId") || "").trim();
-
-  const accountsOut: Array<{
+  const jobs: Array<{
     userId: string;
-    email: string;
+    to: string;
     shortlistName: string;
     eventCount: number;
-    events: MatchedEmailEvent[];
+    events: any[];
   }> = [];
 
   let scannedAccounts = 0;
   let matchedAccounts = 0;
 
+  const seenUsers = new Set<string>();
   let cursor: string | undefined = undefined;
+
   do {
-    const res = await env.AUTH_KV.list({ prefix: "acct/", cursor, limit: 1000 });
+    const res = await env.AUTH_KV.list({ prefix: "auth/email/", cursor, limit: 1000 });
     cursor = res.cursor;
 
     for (const k of res.keys) {
-      if (!k.name.endsWith("/details")) continue;
+      const email = k.name.slice("auth/email/".length);
+      if (!email || !email.includes("@")) continue;
 
-      const parts = k.name.split("/");
-      if (parts.length !== 3) continue;
+      const idx = (await env.AUTH_KV.get(k.name, { type: "json" })) as any;
+      const userId = typeof idx?.userId === "string" ? idx.userId : "";
+      if (!userId || !UUID_RE.test(userId)) continue;
 
-      const userId = parts[1];
-      if (!UUID_RE.test(userId)) continue;
-      if (onlyUserId && userId !== onlyUserId) continue;
+      // avoid evaluating same user twice if multiple emails ever exist
+      if (seenUsers.has(userId)) continue;
+      seenUsers.add(userId);
 
       scannedAccounts++;
 
-      const details = (await env.AUTH_KV.get(k.name, { type: "json" })) as any;
-      if (!details || typeof details !== "object") continue;
-
-      const email = typeof details.email === "string" ? details.email.trim() : "";
-      if (!email || !email.includes("@")) continue;
-
-      const en = details.emailNotifications;
+      const details = (await getDetails(env, userId)) as any;
+      const en = details?.emailNotifications;
       if (!en || typeof en !== "object" || Number(en.version) !== 1 || !Array.isArray(en.rules)) continue;
 
-      const rules: EmailRuleV1[] = en.rules.filter((r: any) => r && r.enabled === true);
+      const rules = en.rules.filter((r: any) => r && r.enabled === true);
       if (!rules.length) continue;
 
-      const needsShortlist = rules.some((r) => r.scope === "shortlist");
+      const needsShortlist = rules.some((r: any) => r.scope === "shortlist");
       const favs = new Set<string>();
       if (needsShortlist) {
         const favArr = await getAccountResource(env, userId, "favourites");
@@ -553,10 +550,11 @@ async function handleEmailNotificationsEvaluatePack(req: Request, env: Env): Pro
       if (!matched.length) continue;
 
       matchedAccounts++;
-      accountsOut.push({
+
+      jobs.push({
         userId,
-        email,
-        shortlistName: typeof details.shortlistName === "string" ? details.shortlistName : "",
+        to: email,
+        shortlistName: typeof details?.shortlistName === "string" ? details.shortlistName : "",
         eventCount: matched.length,
         events: matched,
       });
@@ -565,18 +563,17 @@ async function handleEmailNotificationsEvaluatePack(req: Request, env: Env): Pro
     if (res.list_complete) break;
   } while (cursor);
 
-  const result = {
+  const out = {
     ok: true,
     pack: { generatedAt: pack.generatedAt, range: pack.range, stats: pack.stats },
     scannedAccounts,
     matchedAccounts,
-    accounts: accountsOut,
+    accounts: jobs,
   };
 
-  console.log(JSON.stringify(result, null, 2)); // requested: ok for now
-
-  // TODO: build + send emails from `result.accounts`
-  return json(req, 200, result);
+  console.log(JSON.stringify(out, null, 2));
+  // TODO: actually send emails for `jobs` (SMTP)
+  return json(req, 200, out);
 }
 
 
@@ -692,7 +689,7 @@ async function router(req: Request, env: Env): Promise<Response> {
 
   if (pathname === '/email') {
     if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
-    return handleEmailNotificationsEvaluatePack(req, env);
+    return handleEmailPack(req, env);
   }
 
   const acct = parseAccountRoute(pathname);
