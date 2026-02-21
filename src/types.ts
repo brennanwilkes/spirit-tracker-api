@@ -30,7 +30,6 @@ export type EmailIndex = {
 export type Score = Record<string, number>;
 
 export type EmailEventType =
-  | "IN_STOCK"
   | "OUT_OF_STOCK"
   | "PRICE_DROP"
   | "GLOBAL_NEW"

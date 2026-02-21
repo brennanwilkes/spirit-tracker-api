@@ -15,7 +15,7 @@ const MAX_RULES = 50;
 const MAX_KW = 16;
 const MAX_KW_LEN = 40;
 
-const EVENT_TYPES: EmailEventType[] = ["IN_STOCK","OUT_OF_STOCK","PRICE_DROP","GLOBAL_NEW","GLOBAL_RETURN"];
+const EVENT_TYPES: EmailEventType[] = ["OUT_OF_STOCK","PRICE_DROP","GLOBAL_NEW","GLOBAL_RETURN"];
 const STORE_ID_RE = /^[a-z0-9_-]{1,64}$/;
 
 /* -------------------------------------------------------------------------- */
@@ -150,10 +150,20 @@ function validateEmailRuleV1(x: any): EmailRuleV1 {
       out.storeId = s;
     }
 
-    // across market
+    // across market (preserve false; default true for GLOBAL_NEW; not allowed for PRICE_DROP)
     if (filtersIn.acrossMarket != null) {
       if (typeof filtersIn.acrossMarket !== "boolean") throw new Error("acrossMarket must be boolean");
-      if (filtersIn.acrossMarket) out.acrossMarket = true;
+      out.acrossMarket = filtersIn.acrossMarket;
+    }
+
+    // Default: GLOBAL_NEW is across-market unless explicitly turned off
+    if (eventType === "GLOBAL_NEW" && out.acrossMarket == null) {
+      out.acrossMarket = true;
+    }
+
+    // PRICE_DROP doesn't use acrossMarket
+    if (eventType === "PRICE_DROP") {
+      delete out.acrossMarket;
     }
 
     if (eventType === "PRICE_DROP") {
