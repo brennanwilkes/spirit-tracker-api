@@ -9,6 +9,7 @@ import { getAccountResource, getDetails, getEmailIndex, keys, putAccountResource
 import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, validatePasswordResetConfirm, validateScore, validateStringArray, validateBoolMap, validateScorePatch, normalizeEmail, validateEmailEventPackV1 } from './validate';
 import { handleOauth } from './oauth';
 import { sendMailSmtp } from './smtp';
+import { buildEmailAlert } from "./email_alert";
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let t: any;
@@ -523,6 +524,8 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
       if (!email || !email.includes("@")) continue;
 
       const idx = (await env.AUTH_KV.get(k.name, { type: "json" })) as any;
+      if (idx?.verified === false) continue;
+
       const userId = typeof idx?.userId === "string" ? idx.userId : "";
       if (!userId || !UUID_RE.test(userId)) continue;
 
@@ -567,15 +570,58 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
 
   const out = {
     ok: true,
-    pack: { generatedAt: pack.generatedAt, range: pack.range, stats: pack.stats },
+    pack: { generatedAt: pack.generatedAt, range: pack.range ?? null, stats: pack.stats },
     scannedAccounts,
     matchedAccounts,
     accounts: jobs,
   };
 
-  console.log(JSON.stringify(out, null, 2));
-  // TODO: actually send emails for `jobs` (SMTP)
-  return json(req, 200, out);
+
+
+  const STEP_MS = 30000;
+  let attempted = 0;
+  let sent = 0;
+  const failures: Array<{ to: string; error: string }> = [];
+  
+  for (const job of jobs) {
+    attempted++;
+    try {
+      const email = buildEmailAlert(
+        {
+          userId: job.userId,
+          to: job.to,
+          shortlistName: job.shortlistName,
+          eventCount: job.eventCount,
+          events: job.events,
+        },
+        { generatedAt: pack.generatedAt }
+      );
+  
+      await withTimeout(
+        sendMailSmtp(env, {
+          to: job.to,
+          subject: email.subject,
+          text: email.text,
+          html: email.html,
+        }),
+        STEP_MS,
+        "sendMailSmtp(email pack)"
+      );
+  
+      sent++;
+    } catch (e: any) {
+      failures.push({
+        to: job.to,
+        error: typeof e?.message === "string" ? e.message : String(e),
+      });
+    }
+  }
+  
+  return json(req, 200, {
+    ...out,
+    email: { attempted, sent, failed: failures.length },
+    failures: failures.slice(0, 25),
+  });
 }
 
 
