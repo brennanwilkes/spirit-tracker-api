@@ -586,17 +586,19 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
   for (const job of jobs) {
     attempted++;
     try {
+      const commitSha = pack?.range && typeof (pack as any).range?.toSha === "string" ? String((pack as any).range.toSha).trim() : undefined;
+      
       const email = buildEmailAlert(
         {
           userId: job.userId,
           to: job.to,
-          shortlistName: job.shortlistName,
+          shortlistName: "", // ignored
           eventCount: job.eventCount,
           events: job.events,
         },
-        { generatedAt: pack.generatedAt }
+        { commitSha },
       );
-  
+
       await withTimeout(
         sendMailSmtp(env, {
           to: job.to,
@@ -618,7 +620,6 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
   }
   
   return json(req, 200, {
-    ...out,
     email: { attempted, sent, failed: failures.length },
     failures: failures.slice(0, 25),
   });
