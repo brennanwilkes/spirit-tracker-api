@@ -24,8 +24,8 @@ export type MatchedEmailEvent = {
 export type EmailAlertJob = {
   userId: string;
   to: string;
-  shortlistName: string;
-  eventCount: number;
+  shortlistName: string; // ignored in rendering
+  eventCount: number; // ignored; derived from events
   events: MatchedEmailEvent[];
 };
 
@@ -43,7 +43,6 @@ function escHtml(s: unknown): string {
 function parseMoney(s: string | undefined): number | undefined {
   const raw = String(s ?? "").trim();
   if (!raw) return undefined;
-  // keep digits, dot, minus
   const cleaned = raw.replace(/[^\d.-]/g, "");
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : undefined;
@@ -74,7 +73,7 @@ function commitUrl(sha: string): string {
 
 function badge(text: string, tone: "good" | "bad" | "neutral" | "best" | "accent" = "neutral"): string {
   const base =
-    "display:inline-block;font-size:12px;line-height:1.2;padding:7px 10px;border-radius:999px;border:1px solid #242c35;background:#0f1318;color:#9aa6b2;margin:0 6px 6px 0;white-space:nowrap;";
+    "display:inline-block;font-size:11px;line-height:1;padding:6px 9px;border-radius:999px;border:1px solid #242c35;background:#0f1318;color:#9aa6b2;margin:0 6px 0 0;white-space:nowrap;";
   const t =
     tone === "good"
       ? "color:rgba(90,200,120,0.98);border-color:rgba(90,200,120,0.35);background:rgba(90,200,120,0.10);"
@@ -111,22 +110,31 @@ function groupTitle(t: EmailEventType): string {
   return String(t);
 }
 
+function pickBadges(ev: MatchedEmailEvent): string[] {
+  const out: string[] = [];
+
+  const eb = eventBadge(ev);
+  out.push(badge(eb.label, eb.tone));
+
+  // prioritize "best" then "market-wide" as a second pill
+  if (ev.isCheapestNow) out.push(badge("BEST PRICE", "best"));
+  else if (ev.marketNew || ev.marketReturn || ev.marketOut) out.push(badge("MARKET-WIDE", "neutral"));
+
+  // hard cap to avoid wrapping on phones
+  return out.slice(0, 2);
+}
+
 function renderEventCard(ev: MatchedEmailEvent): string {
   const url = itemUrl(ev.sku);
   const img = String(ev.skuImg || "").trim();
   const name = ev.skuName || `(SKU ${ev.sku})`;
 
-  const badges: string[] = [];
-  const eb = eventBadge(ev);
-  badges.push(badge(eb.label, eb.tone));
+  const pills = pickBadges(ev);
 
-  // Market-wide signals (computed flags)
-  if (ev.marketNew || ev.marketReturn || ev.marketOut) badges.push(badge("MARKET-WIDE", "neutral"));
+  const storeLine = ev.storeLabel
+    ? `<div style="margin-top:6px;font-size:12px;color:#9aa6b2;">${escHtml(ev.storeLabel)}</div>`
+    : "";
 
-  if (ev.storeLabel) badges.push(badge(ev.storeLabel, "neutral"));
-  if (ev.isCheapestNow) badges.push(badge("BEST PRICE", "best"));
-
-  // Minimal price line (rounded)
   let priceLine = "";
   if (ev.eventType === "PRICE_DROP") {
     const oldP = fmtMoneyStrWhole(ev.oldPrice);
@@ -134,43 +142,51 @@ function renderEventCard(ev: MatchedEmailEvent): string {
     const abs = fmtMoneyWhole(ev.dropAbs);
     const pct = fmtPctWhole(ev.dropPct);
 
-    const left = oldP ? `Was ${escHtml(oldP)}` : "";
-    const mid = newP ? `Now <span style="color:#e7edf3;font-weight:800;">${escHtml(newP)}</span>` : "";
-    const save = abs || pct ? `Save <span style="color:rgba(90,200,120,0.98);font-weight:800;">${escHtml(abs)}${abs && pct ? " · " : ""}${escHtml(pct)}</span>` : "";
+    const wasNow =
+      oldP && newP
+        ? `Was <span style="color:#9aa6b2;">${escHtml(oldP)}</span> → Now <span style="color:#e7edf3;font-weight:900;">${escHtml(newP)}</span>`
+        : newP
+          ? `Now <span style="color:#e7edf3;font-weight:900;">${escHtml(newP)}</span>`
+          : "";
 
-    const parts = [left, mid].filter(Boolean).join(" • ");
-    priceLine = [parts, save].filter(Boolean).join(" &nbsp; ");
+    const save =
+      abs || pct
+        ? ` · Save <span style="color:rgba(90,200,120,0.98);font-weight:900;">${escHtml(abs)}${
+            pct ? ` (${escHtml(pct)})` : ""
+          }</span>`
+        : "";
+
+    priceLine = wasNow
+      ? `<div style="margin-top:6px;font-size:13px;color:#9aa6b2;line-height:1.35;">${wasNow}${save}</div>`
+      : "";
   }
 
-  // Mobile-first: always stacked, full width, large tap target.
+  // Whole card is clickable; table keeps left image / right text on mobile.
   return `
 <a href="${escHtml(url)}" style="text-decoration:none;color:inherit;display:block;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #242c35;background:#0f1318;border-radius:16px;margin:12px 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #242c35;background:#0f1318;border-radius:14px;margin:10px 0;">
     <tr>
-      <td style="padding:14px;">
+      <td style="padding:12px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr>
-            <td align="center" style="padding:2px 0 10px;">
+            <td width="72" valign="top" style="width:72px;padding-right:12px;">
               ${
                 img
-                  ? `<img src="${escHtml(img)}" width="96" height="96" alt="${escHtml(
+                  ? `<img src="${escHtml(img)}" width="72" height="72" alt="${escHtml(
                       name,
-                    )}" style="display:block;width:96px;height:96px;object-fit:cover;border-radius:16px;border:1px solid #242c35;background:#0b0d10;">`
-                  : `<div style="width:96px;height:96px;border-radius:16px;border:1px solid #242c35;background:#0b0d10;"></div>`
+                    )}" style="display:block;width:72px;height:72px;object-fit:cover;border-radius:14px;border:1px solid #242c35;background:#0b0d10;">`
+                  : `<div style="width:72px;height:72px;border-radius:14px;border:1px solid #242c35;background:#0b0d10;"></div>`
               }
             </td>
-          </tr>
-          <tr>
-            <td style="padding:0 2px;">
-              <div style="font-size:16px;font-weight:900;line-height:1.25;margin:0;color:#e7edf3;">
+            <td valign="top" style="padding:0;">
+              <div style="font-size:15px;font-weight:900;line-height:1.25;margin:0;color:#e7edf3;">
                 ${escHtml(name)}
               </div>
-              ${
-                priceLine
-                  ? `<div style="margin-top:8px;font-size:14px;color:#9aa6b2;line-height:1.35;">${priceLine}</div>`
-                  : ""
-              }
-              <div style="margin-top:10px;">${badges.join("")}</div>
+              ${priceLine}
+              ${storeLine}
+              <div style="margin-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${pills.join("")}
+              </div>
             </td>
           </tr>
         </table>
@@ -231,34 +247,47 @@ export function buildEmailAlert(
     lines.push("");
   }
 
-  if (meta?.commitSha) {
-    const sha = String(meta.commitSha).trim();
-    if (sha) lines.push(`Build: ${commitUrl(sha)}`);
-  }
+  const sha = String(meta?.commitSha || "").trim();
+  const reportHref = sha ? commitUrl(sha) : SITE;
 
-  lines.push(`Open: ${SITE}`);
+  lines.push(`View full report: ${reportHref}`);
 
   // html
+  const headerHtml = `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #242c35;background:#12161b;border-radius:14px;">
+  <tr>
+    <td style="padding:14px 14px 12px;">
+      <div style="font-size:16px;font-weight:900;color:#e7edf3;line-height:1.2;">Spirit Tracker</div>
+      <div style="margin-top:6px;font-size:13px;color:#9aa6b2;">
+        <span style="color:#e7edf3;font-weight:900;">${escHtml(total)}</span> update${escHtml(s)}
+      </div>
+    </td>
+  </tr>
+</table>
+  `.trim();
+
   const sections = order
     .map((t) => {
       const arr = groups.get(t) || [];
       if (!arr.length) return "";
       return `
-        <div style="margin-top:18px;">
-          <div style="font-size:14px;font-weight:900;color:#e7edf3;margin:0 0 8px;">
-            ${escHtml(groupTitle(t))} <span style="color:#9aa6b2;font-weight:700;">(${arr.length})</span>
-          </div>
-          ${arr.map(renderEventCard).join("")}
-        </div>
-      `;
+<div style="margin-top:16px;">
+  <div style="font-size:14px;font-weight:900;color:#e7edf3;margin:0 0 8px;">
+    ${escHtml(groupTitle(t))} <span style="color:#9aa6b2;font-weight:800;">(${arr.length})</span>
+  </div>
+  ${arr.map(renderEventCard).join("")}
+</div>
+      `.trim();
     })
     .join("");
 
-  const sha = String(meta?.commitSha || "").trim();
-  const shaShort = sha ? sha.slice(0, 7) : "";
-  const shaHref = sha ? commitUrl(sha) : "";
+  const footerHtml = `
+<div style="margin-top:18px;border-top:1px solid #242c35;padding-top:14px;color:#9aa6b2;font-size:12px;line-height:1.6;">
+  <a href="${escHtml(reportHref)}" style="color:#7dd3fc;text-decoration:none;font-weight:900;">View full report</a>
+</div>
+  `.trim();
 
-  // Full-width bg wrapper table fixes “white margins” in many clients.
+  // Full-width wrapper fixes the “white margins” effect in many clients.
   const html = `
 <!doctype html>
 <html>
@@ -268,36 +297,15 @@ export function buildEmailAlert(
     <title>${escHtml(subject)}</title>
   </head>
   <body style="margin:0;padding:0;background:#0b0d10;color:#e7edf3;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#0b0d10" style="background:#0b0d10;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#0b0d10" style="background:#0b0d10;margin:0;padding:0;">
       <tr>
-        <td align="center" style="padding:18px 10px;">
+        <td align="center" style="padding:16px 10px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;">
             <tr>
               <td>
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #242c35;background:#12161b;border-radius:16px;">
-                  <tr>
-                    <td style="padding:16px;">
-                      <div style="font-size:20px;font-weight:900;margin:0;color:#e7edf3;">Spirit Tracker</div>
-                      <div style="margin-top:8px;font-size:14px;color:#9aa6b2;line-height:1.4;">
-                        <span style="color:#e7edf3;font-weight:900;">${escHtml(total)}</span> update${escHtml(s)}
-                      </div>
-                    </td>
-                  </tr>
-                </table>
-
+                ${headerHtml}
                 ${sections}
-
-                <div style="margin-top:18px;border-top:1px solid #242c35;padding-top:14px;color:#9aa6b2;font-size:12px;line-height:1.6;">
-                  <div>Open: <a href="${escHtml(SITE)}" style="color:#7dd3fc;text-decoration:none;">${escHtml(SITE)}</a></div>
-                  ${
-                    shaHref
-                      ? `<div style="margin-top:6px;">Build: <a href="${escHtml(
-                          shaHref,
-                        )}" style="color:#7dd3fc;text-decoration:none;">${escHtml(shaShort)}</a></div>`
-                      : ""
-                  }
-                </div>
-
+                ${footerHtml}
               </td>
             </tr>
           </table>
