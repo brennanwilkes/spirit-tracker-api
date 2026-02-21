@@ -22,7 +22,7 @@ export type MatchedEmailEvent = {
 
   isCheapestNow?: boolean;
 
-  // Optional future field (if you decide to emit it separately)
+  // optional future field (if you emit it separately)
   priceNow?: string;
 };
 
@@ -116,7 +116,7 @@ function pickBadges(ev: MatchedEmailEvent): string[] {
   return out.slice(0, 2);
 }
 
-/* ---------- Titles / grouping ---------- */
+/* ---------- Grouping ---------- */
 
 function groupTitle(t: EmailEventType): string {
   if (t === "PRICE_DROP") return "On sale";
@@ -126,10 +126,178 @@ function groupTitle(t: EmailEventType): string {
   return String(t);
 }
 
+/* ---------- Summary blurb (own method) ---------- */
+
+function getBrandHeuristic(name: string): string {
+  const s = String(name || "").trim();
+  if (!s) return "";
+  const words = s
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter(Boolean);
+
+  const stopWords = new Set([
+    "single",
+    "malt",
+    "whisky",
+    "whiskey",
+    "bourbon",
+    "rye",
+    "cask",
+    "reserve",
+    "edition",
+    "batch",
+    "bottle",
+    "proof",
+    "year",
+    "years",
+    "yr",
+    "yo",
+    "y/o",
+  ]);
+
+  const out: string[] = [];
+  for (const w of words) {
+    const lw = w.toLowerCase();
+    if (/\d/.test(w)) break;
+    if (stopWords.has(lw) && out.length >= 1) break;
+    out.push(w);
+    if (out.length >= 3) break;
+  }
+  // common two-word brands should still work (Old Forester, Co-op, etc.)
+  return out.join(" ").trim();
+}
+
+function buildSummaryBlurb(
+  events: MatchedEmailEvent[],
+  total: number,
+): { html: string; text: string } {
+  const counts: Record<string, number> = { PRICE_DROP: 0, GLOBAL_NEW: 0, GLOBAL_RETURN: 0, OUT_OF_STOCK: 0 };
+  const byStoreNew = new Map<string, number>();
+  const byStoreReturn = new Map<string, number>();
+  const byBrand = new Map<string, number>();
+
+  let bestDeal: MatchedEmailEvent | null = null;
+  let bestDealScore = -1;
+
+  for (const ev of events || []) {
+    counts[String(ev.eventType)] = (counts[String(ev.eventType)] || 0) + 1;
+
+    // store signals
+    const store = String(ev.storeLabel || "").trim();
+    if (store) {
+      if (ev.eventType === "GLOBAL_NEW") byStoreNew.set(store, (byStoreNew.get(store) || 0) + 1);
+      if (ev.eventType === "GLOBAL_RETURN") byStoreReturn.set(store, (byStoreReturn.get(store) || 0) + 1);
+    }
+
+    // brand signals
+    const brand = getBrandHeuristic(String(ev.skuName || ""));
+    if (brand) byBrand.set(brand, (byBrand.get(brand) || 0) + 1);
+
+    // best deal heuristic
+    if (ev.eventType === "PRICE_DROP") {
+      const abs = typeof ev.dropAbs === "number" && Number.isFinite(ev.dropAbs) ? ev.dropAbs : 0;
+      const pct = typeof ev.dropPct === "number" && Number.isFinite(ev.dropPct) ? ev.dropPct : 0;
+      const score = abs * 2 + pct; // weight dollars a bit more
+      if (score > bestDealScore) {
+        bestDealScore = score;
+        bestDeal = ev;
+      }
+    }
+  }
+
+  const introShort =
+    `Tap any bottle to open it. Scroll to the bottom for the full report.`;
+  const introLong =
+    `Lots of movement today. Tap any bottle to open it. Scroll to the bottom for the full report.`;
+
+  const typeLine =
+    `${total} update${total === 1 ? "" : "s"} · ` +
+    `${counts.PRICE_DROP || 0} sale${(counts.PRICE_DROP || 0) === 1 ? "" : "s"}, ` +
+    `${counts.GLOBAL_NEW || 0} just landed, ` +
+    `${counts.GLOBAL_RETURN || 0} back, ` +
+    `${counts.OUT_OF_STOCK || 0} out`;
+
+  function topN(map: Map<string, number>, n: number): Array<{ k: string; v: number }> {
+    return Array.from(map.entries())
+      .map(([k, v]) => ({ k, v }))
+      .sort((a, b) => b.v - a.v || a.k.localeCompare(b.k))
+      .slice(0, n);
+  }
+
+  const topNewStores = topN(byStoreNew, 3);
+  const topReturnStores = topN(byStoreReturn, 3);
+  const topBrands = topN(byBrand, 4);
+
+  const dealLine = bestDeal
+    ? (() => {
+        const name = bestDeal.skuName || `(SKU ${bestDeal.sku})`;
+        const store = String(bestDeal.storeLabel || "").trim();
+        const saveAbs = fmtSaveAbsWhole(bestDeal.dropAbs);
+        const savePct = fmtPctWhole(bestDeal.dropPct);
+        const best = bestDeal.isCheapestNow ? " (best price)" : "";
+        const save = [saveAbs, savePct ? `(${savePct})` : ""].filter(Boolean).join(" ");
+        return `Best deal: ${name} — save ${save || "?"}${store ? ` at ${store}` : ""}${best}.`;
+      })()
+    : "";
+
+  const newStoresLine =
+    topNewStores.length
+      ? `Just landed: ${topNewStores.map((x) => `${x.k} (${x.v})`).join(", ")}.`
+      : "";
+
+  const returnStoresLine =
+    topReturnStores.length
+      ? `Back in stock: ${topReturnStores.map((x) => `${x.k} (${x.v})`).join(", ")}.`
+      : "";
+
+  const brandsLine =
+    topBrands.length
+      ? `Trending: ${topBrands.map((x) => x.k).join(", ")}.`
+      : "";
+
+  const longTextParts = [
+    typeLine + ".",
+    dealLine,
+    newStoresLine,
+    returnStoresLine,
+    brandsLine,
+    introLong,
+  ].filter(Boolean);
+
+  const shortTextParts = [
+    typeLine + ".",
+    introShort,
+  ].filter(Boolean);
+
+  const longHtml = `
+<div style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.6;">
+  <div style="font-weight:800;color:#0f172a;margin-bottom:4px;">${escHtml(typeLine)}</div>
+  ${dealLine ? `<div style="margin-top:6px;">${escHtml(dealLine)}</div>` : ""}
+  ${newStoresLine ? `<div style="margin-top:6px;">${escHtml(newStoresLine)}</div>` : ""}
+  ${returnStoresLine ? `<div style="margin-top:6px;">${escHtml(returnStoresLine)}</div>` : ""}
+  ${brandsLine ? `<div style="margin-top:6px;">${escHtml(brandsLine)}</div>` : ""}
+  <div style="margin-top:10px;">Tap any bottle to open it. Scroll to the bottom for the full report.</div>
+</div>
+  `.trim();
+
+  const shortHtml = `
+<div style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.6;">
+  <div style="font-weight:800;color:#0f172a;margin-bottom:6px;">${escHtml(typeLine)}</div>
+  <div>Tap any bottle to open it. Scroll to the bottom for the full report.</div>
+</div>
+  `.trim();
+
+  if (total > 10) {
+    return { html: longHtml, text: longTextParts.join("\n") };
+  }
+  return { html: shortHtml, text: shortTextParts.join("\n") };
+}
+
 /* ---------- Price rendering ---------- */
 
 function renderPriceHtml(ev: MatchedEmailEvent): string {
-  // PRICE DROP: two lines (save on its own line)
+  // PRICE DROP: wrap "Save ..." onto its own line
   if (ev.eventType === "PRICE_DROP") {
     const oldP = String(ev.oldPrice || "").trim();
     const newP = String(ev.newPrice || "").trim();
@@ -170,6 +338,8 @@ function renderPriceHtml(ev: MatchedEmailEvent): string {
   )}</span></div>`;
 }
 
+/* ---------- Card ---------- */
+
 function renderEventCard(ev: MatchedEmailEvent): string {
   const url = itemUrl(ev.sku);
   const img = String(ev.skuImg || "").trim();
@@ -207,27 +377,17 @@ function renderEventCard(ev: MatchedEmailEvent): string {
             </td>
 
             <td valign="top" style="padding:0;">
-              <!-- fixed-height layout to avoid bottom "dead space" -->
+              <!-- more even: top stack + badges anchored near bottom, but without big "space-between" gaps -->
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="height:72px;">
                 <tr>
                   <td valign="top" style="padding:0;">
-                    ${
-                      store
-                        ? `<div style="font-size:13px;color:#475569;line-height:1.25;margin:0;">${escHtml(store)}</div>`
-                        : ""
-                    }
+                    ${store ? `<div style="font-size:13px;color:#475569;line-height:1.25;">${escHtml(store)}</div>` : ""}
+                    ${priceHtml ? `<div style="margin-top:6px;">${priceHtml}</div>` : ""}
                   </td>
                 </tr>
-
-                <tr>
-                  <td valign="middle" style="padding:0;">
-                    ${priceHtml}
-                  </td>
-                </tr>
-
                 <tr>
                   <td valign="bottom" style="padding:0;">
-                    <div style="margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    <div style="margin-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                       ${pills.join("")}
                     </div>
                   </td>
@@ -263,13 +423,18 @@ export function buildEmailAlert(
     groups.get(t)!.push(ev);
   }
 
-  const sha = String(meta?.commitSha || "").trim();
-  const reportHref = sha ? commitUrl(sha) : REPO;
+  const shaFull = String(meta?.commitSha || "").trim();
+  const shaShort = shaFull ? shaFull.slice(0, 12) : "unknown";
+  const reportHref = shaFull ? commitUrl(shaFull) : REPO;
 
-  // text (minimal)
+  const blurb = buildSummaryBlurb(job.events || [], total);
+
+  // text (minimal-ish but useful)
   const lines: string[] = [];
   lines.push(`Spirit Tracker`);
   lines.push(`${total} update${s}`);
+  lines.push("");
+  lines.push(blurb.text);
   lines.push("");
 
   for (const t of order) {
@@ -300,17 +465,8 @@ export function buildEmailAlert(
     lines.push("");
   }
 
-  lines.push(`Commit: ${sha || "(unknown)"}`);
+  lines.push(`Commit: ${shaShort}`);
   lines.push(`View full report: ${reportHref}`);
-
-  const blurbHtml =
-    total > 10
-      ? `
-<div style="margin:0 0 10px;font-size:13px;color:#475569;line-height:1.5;">
-  Updates are grouped by type. Tap any bottle to open it.
-</div>
-        `.trim()
-      : "";
 
   const sections = order
     .map((t) => {
@@ -327,7 +483,7 @@ export function buildEmailAlert(
     })
     .join("");
 
-  // footer: commit + button on one line
+  // footer: commit + button on one line (horizontal commit)
   const footerHtml = `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
        style="margin-top:18px;border:1px solid #d6dde6;background:#ffffff;border-radius:14px;box-shadow:0 1px 2px rgba(15,23,42,0.06);">
@@ -335,11 +491,10 @@ export function buildEmailAlert(
     <td style="padding:14px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td valign="middle" style="padding-right:10px;">
-            <div style="font-size:12px;color:#64748b;margin:0;">Commit:</div>
-            <div style="margin-top:4px;font-size:13px;color:#0f172a;font-weight:900;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
-              ${escHtml(sha ? sha.slice(0, 12) : "unknown")}
-            </div>
+          <td valign="middle" style="padding-right:10px;white-space:nowrap;">
+            <a href="${escHtml(reportHref)}" style="color:#0f172a;text-decoration:none;font-size:13px;font-weight:900;">
+              Commit: <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escHtml(shaShort)}</span>
+            </a>
           </td>
           <td valign="middle" align="right" style="white-space:nowrap;">
             <a href="${escHtml(reportHref)}"
@@ -369,7 +524,7 @@ export function buildEmailAlert(
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;">
             <tr>
               <td>
-                ${blurbHtml}
+                ${blurb.html}
                 ${sections}
                 ${footerHtml}
                 <div style="margin-top:16px;color:#94a3b8;font-size:11px;line-height:1.5;">
