@@ -352,7 +352,7 @@ function renderEventCard(ev: MatchedEmailEvent): string {
               }
             </td>
 
-            <td valign="top" style="padding:0;">
+            <td valign="middle" style="padding:0;vertical-align:middle;">
               ${
                 store
                   ? `<div style="font-size:13px;color:#475569;line-height:1.25;font-weight:700;margin:0 0 6px;">${escHtml(
