@@ -16,11 +16,13 @@ export type MatchedEmailEvent = {
 
   oldPrice?: string;
   newPrice?: string;
+
   dropAbs?: number;
   dropPct?: number | null;
+
   isCheapestNow?: boolean;
 
-  // Optional: if you later add this for NEW/RETURN/OUT events
+  // Optional future field (if you decide to emit it separately)
   priceNow?: string;
 };
 
@@ -33,6 +35,7 @@ export type EmailAlertJob = {
 };
 
 const REPO = "https://github.com/brennanwilkes/spirit-tracker";
+const SITE = "https://spirit.codexwilkes.com";
 
 function escHtml(s: unknown): string {
   return String(s ?? "")
@@ -43,26 +46,24 @@ function escHtml(s: unknown): string {
 }
 
 function itemUrl(sku: string): string {
-  return `https://spirit.codexwilkes.com/#/item/${encodeURIComponent(String(sku || "").trim())}`;
+  return `${SITE}/#/item/${encodeURIComponent(String(sku || "").trim())}`;
 }
 
 function commitUrl(sha: string): string {
   return `${REPO}/commit/${encodeURIComponent(sha)}`;
 }
 
-function roundDollarFromMoneyStr(s: string | undefined): string {
-  const raw = String(s ?? "").trim();
-  if (!raw) return "";
-  const cleaned = raw.replace(/[^\d.-]/g, "");
-  const n = Number(cleaned);
-  if (!Number.isFinite(n)) return "";
-  return `$${Math.round(n)}`;
-}
-
 function fmtPctWhole(n: number | null | undefined): string {
   if (typeof n !== "number" || !Number.isFinite(n)) return "";
   return `${Math.round(Math.abs(n))}%`;
 }
+
+function fmtSaveAbsWhole(n: number | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "";
+  return `$${Math.round(n)}`;
+}
+
+/* ---------- Badges (light theme) ---------- */
 
 function badge(text: string, tone: "good" | "bad" | "neutral" | "best" | "accent" = "neutral"): string {
   const base =
@@ -95,6 +96,28 @@ function eventBadge(ev: MatchedEmailEvent): { label: string; tone: "good" | "bad
   }
 }
 
+function computedBadge(ev: MatchedEmailEvent): { label: string; tone: "best" | "neutral" } | null {
+  if (ev.isCheapestNow) return { label: "BEST PRICE", tone: "best" };
+  if (ev.marketNew) return { label: "NEW TO MARKET", tone: "neutral" };
+  if (ev.marketReturn) return { label: "MARKET RETURN", tone: "neutral" };
+  if (ev.marketOut) return { label: "MARKET OUT", tone: "neutral" };
+  return null;
+}
+
+function pickBadges(ev: MatchedEmailEvent): string[] {
+  const out: string[] = [];
+  const eb = eventBadge(ev);
+  out.push(badge(eb.label, eb.tone));
+
+  const cb = computedBadge(ev);
+  if (cb) out.push(badge(cb.label, cb.tone));
+
+  // cap to avoid wrapping in iOS Mail
+  return out.slice(0, 2);
+}
+
+/* ---------- Titles / grouping ---------- */
+
 function groupTitle(t: EmailEventType): string {
   if (t === "PRICE_DROP") return "On sale";
   if (t === "GLOBAL_NEW") return "Just landed";
@@ -103,25 +126,16 @@ function groupTitle(t: EmailEventType): string {
   return String(t);
 }
 
-function pickBadges(ev: MatchedEmailEvent): string[] {
-  const out: string[] = [];
-  const eb = eventBadge(ev);
-  out.push(badge(eb.label, eb.tone));
+/* ---------- Price rendering ---------- */
 
-  if (ev.isCheapestNow) out.push(badge("BEST PRICE", "best"));
-  else if (ev.marketNew || ev.marketReturn || ev.marketOut) out.push(badge("MARKET-WIDE", "neutral"));
-
-  return out.slice(0, 2);
-}
-
-function priceLine(ev: MatchedEmailEvent): string {
-  // Price drop: unrounded prices, rounded discount amounts
+function renderPriceHtml(ev: MatchedEmailEvent): string {
+  // PRICE DROP: two lines (save on its own line)
   if (ev.eventType === "PRICE_DROP") {
     const oldP = String(ev.oldPrice || "").trim();
     const newP = String(ev.newPrice || "").trim();
 
-    const absRounded = typeof ev.dropAbs === "number" && Number.isFinite(ev.dropAbs) ? `$${Math.round(ev.dropAbs)}` : "";
-    const pctRounded = fmtPctWhole(ev.dropPct);
+    const saveAbs = fmtSaveAbsWhole(ev.dropAbs);
+    const savePct = fmtPctWhole(ev.dropPct);
 
     const wasNow =
       oldP && newP
@@ -133,19 +147,27 @@ function priceLine(ev: MatchedEmailEvent): string {
           : "";
 
     const save =
-      absRounded || pctRounded
-        ? ` · Save <span style="color:rgba(20,120,60,1);font-weight:900;">${escHtml(absRounded)}${
-            pctRounded ? ` (${escHtml(pctRounded)})` : ""
+      saveAbs || savePct
+        ? `Save <span style="color:rgba(42,120,70,1);font-weight:900;">${escHtml(saveAbs)}${
+            savePct ? ` (${escHtml(savePct)})` : ""
           }</span>`
         : "";
 
-    return wasNow ? `${wasNow}${save}` : "";
+    if (!wasNow && !save) return "";
+
+    return `
+      ${wasNow ? `<div style="font-size:13px;color:#475569;line-height:1.25;">${wasNow}</div>` : ""}
+      ${save ? `<div style="margin-top:4px;font-size:13px;color:#475569;line-height:1.25;">${save}</div>` : ""}
+    `.trim();
   }
 
-  // For NEW/RETURN/OUT: show current price if available
+  // NEW/RETURN/OUT: show current price if present (unrounded)
   const cur = String(ev.priceNow || ev.newPrice || "").trim();
-  if (cur) return `Price <span style="color:#0f172a;font-weight:900;">${escHtml(cur)}</span>`;
-  return "";
+  if (!cur) return "";
+
+  return `<div style="font-size:13px;color:#475569;line-height:1.25;">Price <span style="color:#0f172a;font-weight:900;">${escHtml(
+    cur,
+  )}</span></div>`;
 }
 
 function renderEventCard(ev: MatchedEmailEvent): string {
@@ -153,9 +175,8 @@ function renderEventCard(ev: MatchedEmailEvent): string {
   const img = String(ev.skuImg || "").trim();
   const name = ev.skuName || `(SKU ${ev.sku})`;
   const store = String(ev.storeLabel || "").trim();
-
   const pills = pickBadges(ev);
-  const pLine = priceLine(ev);
+  const priceHtml = renderPriceHtml(ev);
 
   return `
 <a href="${escHtml(url)}" style="text-decoration:none;color:inherit;display:block;">
@@ -170,7 +191,7 @@ function renderEventCard(ev: MatchedEmailEvent): string {
       </td>
     </tr>
 
-    <!-- Content row: image left, details right -->
+    <!-- Content row -->
     <tr>
       <td style="padding:12px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -186,22 +207,34 @@ function renderEventCard(ev: MatchedEmailEvent): string {
             </td>
 
             <td valign="top" style="padding:0;">
-              ${
-                store
-                  ? `<div style="font-size:13px;color:#475569;line-height:1.25;margin:0;">${escHtml(store)}</div>`
-                  : ""
-              }
+              <!-- fixed-height layout to avoid bottom "dead space" -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="height:72px;">
+                <tr>
+                  <td valign="top" style="padding:0;">
+                    ${
+                      store
+                        ? `<div style="font-size:13px;color:#475569;line-height:1.25;margin:0;">${escHtml(store)}</div>`
+                        : ""
+                    }
+                  </td>
+                </tr>
 
-              ${
-                pLine
-                  ? `<div style="margin-top:6px;font-size:13px;color:#475569;line-height:1.35;">${pLine}</div>`
-                  : ""
-              }
+                <tr>
+                  <td valign="middle" style="padding:0;">
+                    ${priceHtml}
+                  </td>
+                </tr>
 
-              <div style="margin-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                ${pills.join("")}
-              </div>
+                <tr>
+                  <td valign="bottom" style="padding:0;">
+                    <div style="margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      ${pills.join("")}
+                    </div>
+                  </td>
+                </tr>
+              </table>
             </td>
+
           </tr>
         </table>
       </td>
@@ -210,6 +243,8 @@ function renderEventCard(ev: MatchedEmailEvent): string {
 </a>
   `.trim();
 }
+
+/* ---------- Main builder ---------- */
 
 export function buildEmailAlert(
   job: EmailAlertJob,
@@ -228,7 +263,10 @@ export function buildEmailAlert(
     groups.get(t)!.push(ev);
   }
 
-  // text
+  const sha = String(meta?.commitSha || "").trim();
+  const reportHref = sha ? commitUrl(sha) : REPO;
+
+  // text (minimal)
   const lines: string[] = [];
   lines.push(`Spirit Tracker`);
   lines.push(`${total} update${s}`);
@@ -245,35 +283,31 @@ export function buildEmailAlert(
       if (ev.eventType === "PRICE_DROP") {
         const oldP = String(ev.oldPrice || "").trim();
         const newP = String(ev.newPrice || "").trim();
-
-        const absRounded = typeof ev.dropAbs === "number" && Number.isFinite(ev.dropAbs) ? roundDollarFromMoneyStr(String(ev.dropAbs)) : "";
-        const pctRounded = fmtPctWhole(ev.dropPct);
-
-        const save = absRounded || pctRounded ? ` (Save ${absRounded}${absRounded && pctRounded ? ", " : ""}${pctRounded})` : "";
+        const saveAbs = fmtSaveAbsWhole(ev.dropAbs);
+        const savePct = fmtPctWhole(ev.dropPct);
         const best = ev.isCheapestNow ? " [Best price]" : "";
-        lines.push(`- ${name}${best}: ${oldP ? `Was ${oldP} → ` : ""}${newP ? `Now ${newP}` : ""}${save} — ${url}`);
+        const line1 = `${oldP ? `Was ${oldP} → ` : ""}${newP ? `Now ${newP}` : "Price updated"}`;
+        const line2 = saveAbs || savePct ? `Save ${saveAbs}${saveAbs && savePct ? " " : ""}${savePct ? `(${savePct})` : ""}` : "";
+        lines.push(`- ${name}${best}: ${line1}${line2 ? ` | ${line2}` : ""} — ${url}`);
       } else {
         const eb = eventBadge(ev).label;
+        const cb = computedBadge(ev);
         const cur = String(ev.priceNow || ev.newPrice || "").trim();
-        const priceTxt = cur ? ` (Price ${cur})` : "";
-        const mw = ev.marketNew || ev.marketReturn || ev.marketOut ? " [Market-wide]" : "";
-        lines.push(`- ${name}: ${eb}${mw}${priceTxt} — ${url}`);
+        const extra = [cb ? cb.label : "", cur ? `Price ${cur}` : ""].filter(Boolean).join(", ");
+        lines.push(`- ${name}: ${eb}${extra ? ` (${extra})` : ""} — ${url}`);
       }
     }
     lines.push("");
   }
 
-  const sha = String(meta?.commitSha || "").trim();
-  const reportHref = sha ? commitUrl(sha) : REPO;
-
+  lines.push(`Commit: ${sha || "(unknown)"}`);
   lines.push(`View full report: ${reportHref}`);
 
-  // optional blurb if many updates
   const blurbHtml =
     total > 10
       ? `
-<div style="margin:12px 0 2px;font-size:13px;color:#475569;line-height:1.5;">
-  Here’s what changed since the last run — grouped by type. Tap any bottle to open it.
+<div style="margin:0 0 10px;font-size:13px;color:#475569;line-height:1.5;">
+  Updates are grouped by type. Tap any bottle to open it.
 </div>
         `.trim()
       : "";
@@ -293,29 +327,33 @@ export function buildEmailAlert(
     })
     .join("");
 
-  const reportBlock = `
+  // footer: commit + button on one line
+  const footerHtml = `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
        style="margin-top:18px;border:1px solid #d6dde6;background:#ffffff;border-radius:14px;box-shadow:0 1px 2px rgba(15,23,42,0.06);">
   <tr>
     <td style="padding:14px;">
-      <div style="font-size:13px;color:#475569;margin:0 0 8px;">Want the full diff / run details?</div>
-      <a href="${escHtml(reportHref)}"
-         style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:900;">
-        View full report
-      </a>
-      ${
-        sha
-          ? `<div style="margin-top:8px;font-size:12px;color:#64748b;">Commit: <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escHtml(
-              sha.slice(0, 7),
-            )}</span></div>`
-          : ""
-      }
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td valign="middle" style="padding-right:10px;">
+            <div style="font-size:12px;color:#64748b;margin:0;">Commit:</div>
+            <div style="margin-top:4px;font-size:13px;color:#0f172a;font-weight:900;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
+              ${escHtml(sha ? sha.slice(0, 12) : "unknown")}
+            </div>
+          </td>
+          <td valign="middle" align="right" style="white-space:nowrap;">
+            <a href="${escHtml(reportHref)}"
+               style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:900;">
+              View full report
+            </a>
+          </td>
+        </tr>
+      </table>
     </td>
   </tr>
 </table>
   `.trim();
 
-  // Light page background so it blends with iOS Mail
   const html = `
 <!doctype html>
 <html>
@@ -333,7 +371,7 @@ export function buildEmailAlert(
               <td>
                 ${blurbHtml}
                 ${sections}
-                ${reportBlock}
+                ${footerHtml}
                 <div style="margin-top:16px;color:#94a3b8;font-size:11px;line-height:1.5;">
                   You’re receiving this because email notifications are enabled.
                 </div>
