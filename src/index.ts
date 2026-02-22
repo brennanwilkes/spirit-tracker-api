@@ -190,14 +190,53 @@ async function handleLogin(req: Request, env: Env): Promise<Response> {
   if (!idx) return errorJson(req, 401, 'Invalid email or password');
   if (!idx.pwHash) return errorJson(req, 401, 'Use OAuth login');
 
-  // New: block until verified (only when explicitly false)
-  if (idx.verified === false) return errorJson(req, 403, 'Email not verified');
-
+  // Verify password first (avoids leaking "unverified" without correct credentials)
   const ok = await verifyPassword(password, idx.pwHash, env.PASSWORD_PEPPER);
   if (!ok) return errorJson(req, 401, 'Invalid email or password');
 
+  // If unverified: resend verification email (best-effort) and tell the user clearly.
+  if (idx.verified === false) {
+    try {
+      await resendVerifyEmail(env, req, idx.userId, email);
+    } catch {
+      // swallow; still return the user-facing message
+    }
+    return errorJson(
+      req,
+      403,
+      'Email not verified. We just emailed you a new verification link — check your spam/junk folder.'
+    );
+  }
+  
   const token = await issueToken(env, idx.userId);
   return json(req, 200, { token, userId: idx.userId });
+}
+
+async function resendVerifyEmail(env: Env, req: Request, userId: string, email: string): Promise<void> {
+  const STEP_MS = 15000;
+  const token = await withTimeout(
+    issueActionToken(env, 'email_verify', userId, email, EMAIL_VERIFY_TTL_SECONDS),
+    STEP_MS,
+    'issueActionToken(email_verify)'
+  );
+
+  const verifyUrl = new URL('/verify-email', new URL(req.url).origin);
+  verifyUrl.searchParams.set('token', token);
+
+  await withTimeout(
+    sendMailSmtp(env, {
+      to: email,
+      subject: 'Verify your email',
+      text:
+        `You tried to log in, but your email isn’t verified yet.\n\n` +
+        `Verify your email to unlock your account:\n\n` +
+        `${verifyUrl.toString()}\n\n` +
+        `This link expires in 24 hours.\n\n` +
+        `Tip: Check your spam/junk folder.\n`,
+    }),
+    STEP_MS,
+    'sendMailSmtp(resend verify)'
+  );
 }
 
 async function handleVerifyEmail(req: Request, env: Env): Promise<Response> {
