@@ -65,6 +65,7 @@ export type Details = {
   public: boolean;
   shortlistName?: string;
   emailNotifications?: EmailNotificationsV1;
+  colorScheme?: "light" | "dark";
   [k: string]: unknown;
 };
 

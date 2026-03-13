@@ -241,6 +241,14 @@ export function validateDetails(body: any): Details {
     }
   }
 
+  if ("colorScheme" in body) {
+    if (body.colorScheme == null) {
+      delete body.colorScheme;
+    } else if (body.colorScheme !== "light" && body.colorScheme !== "dark") {
+      throw new Error("details.colorScheme must be 'light', 'dark', or null");
+    }
+  }
+
   return body as Details;
 }
 export function validateStringArray(body: any, name: string): string[] {
