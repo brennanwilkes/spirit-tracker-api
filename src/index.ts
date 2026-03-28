@@ -627,7 +627,8 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
   const STEP_MS = 30000;
   let attempted = 0;
   let sent = 0;
-  const failures: Array<{ to: string; error: string }> = [];
+  const sentSummary: Array<{ uuid: string; skus: string[] }> = [];
+  const failures: Array<{ uuid: string; error: string }> = [];
   
   for (const job of jobs) {
     attempted++;
@@ -657,16 +658,21 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
       );
   
       sent++;
+      sentSummary.push({
+        uuid: job.userId,
+        skus: [...new Set(job.events.map((e: any) => String(e.sku)).filter(Boolean))],
+      });
     } catch (e: any) {
       failures.push({
-        to: job.to,
+        uuid: job.userId,
         error: typeof e?.message === "string" ? e.message : String(e),
       });
     }
   }
-  
+
   return json(req, 200, {
     email: { attempted, sent, failed: failures.length },
+    sent: sentSummary,
     failures: failures.slice(0, 25),
   });
 }
