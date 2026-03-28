@@ -17,6 +17,7 @@ const MAX_KW_LEN = 40;
 
 const EVENT_TYPES: EmailEventType[] = ["OUT_OF_STOCK","PRICE_DROP","GLOBAL_NEW","GLOBAL_RETURN"];
 const STORE_ID_RE = /^[a-z0-9_-]{1,64}$/;
+const VALID_SPIRIT_TYPES = new Set(["rum", "whisky", "gin"]);
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -148,6 +149,15 @@ function validateEmailRuleV1(x: any): EmailRuleV1 {
       const s = String(filtersIn.storeId || "").trim();
       if (!s || !STORE_ID_RE.test(s)) throw new Error("storeId must be a small slug");
       out.storeId = s;
+    }
+
+    // spirit type filter
+    if (filtersIn.spiritTypes != null) {
+      if (!Array.isArray(filtersIn.spiritTypes)) throw new Error("spiritTypes must be an array");
+      const types = filtersIn.spiritTypes
+        .map((t: unknown) => String(t || "").toLowerCase().trim())
+        .filter((t: string) => VALID_SPIRIT_TYPES.has(t));
+      if (types.length) out.spiritTypes = [...new Set<string>(types)];
     }
 
     // across market (preserve false; default true for GLOBAL_NEW; not allowed for PRICE_DROP)
@@ -392,7 +402,11 @@ export function validateEmailEventPackV1(body: any): EmailEventPackV1 {
       priceNum: typeof o?.priceNum === "number" && Number.isFinite(o.priceNum) ? o.priceNum : null,
     }));
 
-    skus[k] = { sku, name, img, members, priceRangeNow, cheapestNow, offersNow };
+    const spiritTypes = Array.isArray(v.spiritTypes)
+      ? v.spiritTypes.map((t: unknown) => String(t || "").trim()).filter((t: string) => VALID_SPIRIT_TYPES.has(t))
+      : [];
+
+    skus[k] = { sku, name, img, members, ...(spiritTypes.length ? { spiritTypes } : {}), priceRangeNow, cheapestNow, offersNow };
   }
 
   const events: EmailPackEventV1[] = [];

@@ -43,9 +43,9 @@ export type EmailRuleV1 = {
   scope: "all" | "shortlist";
   eventType: EmailEventType;
   filters?: {
-    // NEW
     storeId?: string;          // e.g. "kwm"
     acrossMarket?: boolean;    // apply to all stores (same bottle)
+    spiritTypes?: string[];    // e.g. ["rum", "whisky"] — any-of match
 
     keywordsAny?: string[];
     keywordsNone?: string[];
@@ -82,6 +82,7 @@ export type EmailPackSkuV1 = {
   name: string;
   img: string;
   members: string[];
+  spiritTypes?: string[];    // e.g. ["rum"] or ["rum","whisky"] — absent for unclassifiable categories
   priceRangeNow: { min: number; max: number } | null;
   cheapestNow: { priceNum: number; storeIds: string[] } | null;
   offersNow: EmailPackOfferV1[];

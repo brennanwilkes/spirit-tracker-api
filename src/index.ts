@@ -417,6 +417,13 @@ function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, fa
     if (String(ev.storeId || "") !== f.storeId.trim()) return false;
   }
 
+  // spirit type filter (any-of match: rule's types vs SKU's types)
+  if (Array.isArray(f.spiritTypes) && f.spiritTypes.length) {
+    const skuTypes = skuObj?.spiritTypes;
+    if (!skuTypes || !skuTypes.length) return false;
+    if (!f.spiritTypes.some((t) => skuTypes.includes(t))) return false;
+  }
+
   // keyword filters (substring, case-insensitive)
   if (Array.isArray(f.keywordsAny) && f.keywordsAny.length) {
     const ok = f.keywordsAny.some((k) => {
