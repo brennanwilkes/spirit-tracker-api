@@ -110,6 +110,10 @@ export type EmailPackEventV1 = {
   dropAbs?: number;
   dropPct?: number | null;
   isCheapestNow?: boolean;
+
+  // 0..1 rarity score for the canonical sku at pack-build time. The renderer
+  // (email HTML / viz) decides what thresholds and styling to apply.
+  rarity?: number;
 };
 
 export type EmailEventPackV1 = {

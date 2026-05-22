@@ -22,6 +22,9 @@ export type MatchedEmailEvent = {
 
   isCheapestNow?: boolean;
 
+  // 0..1 rarity score from the pack. Renderer thresholds it locally.
+  rarity?: number;
+
   // optional future field (if you emit it separately)
   priceNow?: string;
 };
@@ -314,6 +317,85 @@ function renderPriceHtml(ev: MatchedEmailEvent): string {
   )}</span></div>`;
 }
 
+/* ---------- Rarity tier styling (mirrors viz/style.css light-theme tokens) ----------
+ *
+ * Visual language must stay in sync with viz/style.css. Thresholds are
+ * hardcoded approximations of the dynamic 10th/90th percentile values the
+ * viz computes per build (currently ≈ 0.29 and ≈ 0.70 across ~7,300
+ * canonical SKUs). Recalibrate here if the distribution shifts noticeably.
+ *
+ * Email-client caveats:
+ *  - `background-image` (gradient + SVG data-URI) works in Apple Mail,
+ *    iOS Mail, Gmail webmail. Outlook strips it; falls back to background-color.
+ *  - `box-shadow` works in modern clients; Outlook ignores it.
+ *  - The `border-color` change always renders, so the tier is always
+ *    visually distinguishable even in stripped-down clients.
+ */
+const RARITY_STAPLE_MAX = 0.30;
+const RARITY_RARE_MIN = 0.70;
+
+type RarityTier = "staple" | "rare" | "common";
+
+function tierForRarity(r: number | undefined): RarityTier {
+  if (typeof r !== "number" || !Number.isFinite(r)) return "common";
+  if (r <= RARITY_STAPLE_MAX) return "staple";
+  if (r >= RARITY_RARE_MIN) return "rare";
+  return "common";
+}
+
+// Gold diamond pattern, identical to viz light-theme (deeper goldenrod for
+// legibility on a pale card). Two tiny diamonds per 28px tile, offset along
+// the diagonal so dots fall on diagonal rows.
+const RARE_DIAMOND_DATA_URI =
+  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><polygon points='7,5 9,7 7,9 5,7' fill='%23b8860b' fill-opacity='0.40'/><polygon points='21,19 23,21 21,23 19,21' fill='%23b8860b' fill-opacity='0.40'/></svg>\")";
+
+function cardOuterStyle(tier: RarityTier): string {
+  if (tier === "staple") {
+    return [
+      "border:1px solid rgba(71,85,105,0.55)",
+      "background:#ffffff",
+      "border-radius:14px",
+      "margin:10px 0",
+      "box-shadow:0 0 12px rgba(71,85,105,0.16), 0 1px 2px rgba(15,23,42,0.06)",
+    ].join(";");
+  }
+  if (tier === "rare") {
+    // Layered background: (1) cover gradient that fades the pattern past the
+    // diagonal back to white, (2) gold diamond polka-dot pattern, (3) purple
+    // radial wash anchored at the top-left corner.
+    const coverGradient =
+      "linear-gradient(135deg, transparent 0%, transparent 18%, #ffffff 45%, #ffffff 100%)";
+    const purpleWash =
+      "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.22) 0%, rgba(126,34,206,0.08) 30%, transparent 60%)";
+
+    return [
+      "border:1px solid rgba(126,34,206,0.95)",
+      "background-color:#ffffff",
+      `background-image:${coverGradient}, ${RARE_DIAMOND_DATA_URI}, ${purpleWash}`,
+      "background-size:auto, 28px 28px, auto",
+      "background-position:0 0",
+      "background-repeat:no-repeat, repeat, no-repeat",
+      "border-radius:14px",
+      "margin:10px 0",
+      "box-shadow:0 0 16px rgba(126,34,206,0.22), 0 6px 22px rgba(126,34,206,0.22)",
+    ].join(";");
+  }
+  // common — original styling
+  return [
+    "border:1px solid #d6dde6",
+    "background:#ffffff",
+    "border-radius:14px",
+    "margin:10px 0",
+    "box-shadow:0 1px 2px rgba(15,23,42,0.06)",
+  ].join(";");
+}
+
+function titleBorderColor(tier: RarityTier): string {
+  if (tier === "staple") return "rgba(71,85,105,0.30)";
+  if (tier === "rare") return "rgba(126,34,206,0.30)";
+  return "#eef2f7";
+}
+
 /* ---------- Card ---------- */
 
 function renderEventCard(ev: MatchedEmailEvent): string {
@@ -324,13 +406,17 @@ function renderEventCard(ev: MatchedEmailEvent): string {
   const pills = pickBadges(ev);
   const priceHtml = renderPriceHtml(ev);
 
+  const tier = tierForRarity(ev.rarity);
+  const outerStyle = cardOuterStyle(tier);
+  const titleBorder = titleBorderColor(tier);
+
   return `
 <a href="${escHtml(url)}" style="text-decoration:none;color:inherit;display:block;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="border:1px solid #d6dde6;background:#ffffff;border-radius:14px;margin:10px 0;box-shadow:0 1px 2px rgba(15,23,42,0.06);">
+         style="${outerStyle};">
     <!-- Title row (full width) -->
     <tr>
-      <td style="padding:12px 12px 10px;border-bottom:1px solid #eef2f7;">
+      <td style="padding:12px 12px 10px;border-bottom:1px solid ${titleBorder};">
         <div style="font-size:15px;font-weight:900;line-height:1.25;margin:0;color:#0f172a;">
           ${escHtml(name)}
         </div>

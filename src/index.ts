@@ -364,6 +364,8 @@ type MatchedEmailEvent = {
   dropPct?: number | null;
   isCheapestNow?: boolean;
 
+  rarity?: number;
+
   matchedRuleIds: string[];
 };
 
@@ -498,6 +500,8 @@ function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: 
         dropAbs: typeof (ev as any).dropAbs === "number" ? (ev as any).dropAbs : undefined,
         dropPct: typeof (ev as any).dropPct === "number" || (ev as any).dropPct === null ? (ev as any).dropPct : undefined,
         isCheapestNow: (ev as any).isCheapestNow === true,
+
+        rarity: typeof (ev as any).rarity === "number" && Number.isFinite((ev as any).rarity) ? (ev as any).rarity : undefined,
 
         matchedRuleIds: [rule.id],
       };

@@ -457,6 +457,9 @@ export function validateEmailEventPackV1(body: any): EmailEventPackV1 {
       out.isCheapestNow = e.isCheapestNow === true;
     }
 
+    // Rarity (0..1) is independent of event type — accept on any event.
+    if (typeof e.rarity === "number" && Number.isFinite(e.rarity)) out.rarity = e.rarity;
+
     events.push(out);
   }
 
