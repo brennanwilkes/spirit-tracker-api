@@ -638,7 +638,8 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
     attempted++;
     try {
       const commitSha = pack?.range && typeof (pack as any).range?.toSha === "string" ? String((pack as any).range.toSha).trim() : undefined;
-      
+      const rarityThresholds = pack?.rarityThresholds;
+
       const email = buildEmailAlert(
         {
           userId: job.userId,
@@ -647,7 +648,7 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
           eventCount: job.eventCount,
           events: job.events,
         },
-        { commitSha },
+        { commitSha, rarityThresholds },
       );
 
       await withTimeout(

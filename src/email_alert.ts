@@ -320,9 +320,10 @@ function renderPriceHtml(ev: MatchedEmailEvent): string {
 /* ---------- Rarity tier styling (mirrors viz/style.css light-theme tokens) ----------
  *
  * Visual language must stay in sync with viz/style.css. Thresholds are
- * hardcoded approximations of the dynamic 10th/90th percentile values the
- * viz computes per build (currently ≈ 0.29 and ≈ 0.70 across ~7,300
- * canonical SKUs). Recalibrate here if the distribution shifts noticeably.
+ * normally supplied by the pack (rarityThresholds), which carries the
+ * dynamic 10th/90th percentile values the viz computes per build. The
+ * fallback constants below match the viz's recent distribution and are
+ * only used if the pack omits thresholds (older builds).
  *
  * Email-client caveats:
  *  - `background-image` (gradient + SVG data-URI) works in Apple Mail,
@@ -331,32 +332,35 @@ function renderPriceHtml(ev: MatchedEmailEvent): string {
  *  - The `border-color` change always renders, so the tier is always
  *    visually distinguishable even in stripped-down clients.
  */
-const RARITY_STAPLE_MAX = 0.30;
-const RARITY_RARE_MIN = 0.70;
+const RARITY_STAPLE_MAX_FALLBACK = 0.178;
+const RARITY_RARE_MIN_FALLBACK = 0.60;
 
 type RarityTier = "staple" | "rare" | "common";
+type RarityThresholds = { stapleMax: number; rareMin: number };
 
-function tierForRarity(r: number | undefined): RarityTier {
+function tierForRarity(r: number | undefined, t: RarityThresholds): RarityTier {
   if (typeof r !== "number" || !Number.isFinite(r)) return "common";
-  if (r <= RARITY_STAPLE_MAX) return "staple";
-  if (r >= RARITY_RARE_MIN) return "rare";
+  if (r <= t.stapleMax) return "staple";
+  if (r >= t.rareMin) return "rare";
   return "common";
 }
 
 // Gold diamond pattern, identical to viz light-theme (deeper goldenrod for
 // legibility on a pale card). Two tiny diamonds per 28px tile, offset along
 // the diagonal so dots fall on diagonal rows.
+// Inside style="..." attributes, raw double quotes terminate the attribute
+// early. Use &quot; so HTML parsing yields proper url("...") CSS.
 const RARE_DIAMOND_DATA_URI =
-  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><polygon points='7,5 9,7 7,9 5,7' fill='%23b8860b' fill-opacity='0.40'/><polygon points='21,19 23,21 21,23 19,21' fill='%23b8860b' fill-opacity='0.40'/></svg>\")";
+  "url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><polygon points='7,5 9,7 7,9 5,7' fill='%23b8860b' fill-opacity='0.30'/><polygon points='21,19 23,21 21,23 19,21' fill='%23b8860b' fill-opacity='0.30'/></svg>&quot;)";
 
 function cardOuterStyle(tier: RarityTier): string {
   if (tier === "staple") {
     return [
-      "border:1px solid rgba(71,85,105,0.55)",
+      "border:1px solid rgba(71,85,105,0.75)",
       "background:#ffffff",
       "border-radius:14px",
       "margin:10px 0",
-      "box-shadow:0 0 12px rgba(71,85,105,0.16), 0 1px 2px rgba(15,23,42,0.06)",
+      "box-shadow:0 0 14px rgba(71,85,105,0.25), 0 1px 2px rgba(15,23,42,0.06)",
     ].join(";");
   }
   if (tier === "rare") {
@@ -366,10 +370,10 @@ function cardOuterStyle(tier: RarityTier): string {
     const coverGradient =
       "linear-gradient(135deg, transparent 0%, transparent 18%, #ffffff 45%, #ffffff 100%)";
     const purpleWash =
-      "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.22) 0%, rgba(126,34,206,0.08) 30%, transparent 60%)";
+      "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.16) 0%, rgba(126,34,206,0.06) 30%, transparent 60%)";
 
     return [
-      "border:1px solid rgba(126,34,206,0.95)",
+      "border:1px solid rgba(126,34,206,0.85)",
       "background-color:#ffffff",
       `background-image:${coverGradient}, ${RARE_DIAMOND_DATA_URI}, ${purpleWash}`,
       "background-size:auto, 28px 28px, auto",
@@ -377,7 +381,7 @@ function cardOuterStyle(tier: RarityTier): string {
       "background-repeat:no-repeat, repeat, no-repeat",
       "border-radius:14px",
       "margin:10px 0",
-      "box-shadow:0 0 16px rgba(126,34,206,0.22), 0 6px 22px rgba(126,34,206,0.22)",
+      "box-shadow:0 0 12px rgba(126,34,206,0.15), 0 6px 18px rgba(126,34,206,0.15)",
     ].join(";");
   }
   // common — original styling
@@ -391,14 +395,14 @@ function cardOuterStyle(tier: RarityTier): string {
 }
 
 function titleBorderColor(tier: RarityTier): string {
-  if (tier === "staple") return "rgba(71,85,105,0.30)";
-  if (tier === "rare") return "rgba(126,34,206,0.30)";
+  if (tier === "staple") return "rgba(71,85,105,0.40)";
+  if (tier === "rare") return "rgba(126,34,206,0.24)";
   return "#eef2f7";
 }
 
 /* ---------- Card ---------- */
 
-function renderEventCard(ev: MatchedEmailEvent): string {
+function renderEventCard(ev: MatchedEmailEvent, thresholds: RarityThresholds): string {
   const url = itemUrl(ev.sku);
   const img = String(ev.skuImg || "").trim();
   const name = ev.skuName || `(SKU ${ev.sku})`;
@@ -406,7 +410,7 @@ function renderEventCard(ev: MatchedEmailEvent): string {
   const pills = pickBadges(ev);
   const priceHtml = renderPriceHtml(ev);
 
-  const tier = tierForRarity(ev.rarity);
+  const tier = tierForRarity(ev.rarity, thresholds);
   const outerStyle = cardOuterStyle(tier);
   const titleBorder = titleBorderColor(tier);
 
@@ -466,11 +470,16 @@ function renderEventCard(ev: MatchedEmailEvent): string {
 
 export function buildEmailAlert(
   job: EmailAlertJob,
-  meta?: { commitSha?: string },
+  meta?: { commitSha?: string; rarityThresholds?: RarityThresholds },
 ): { subject: string; text: string; html: string } {
+  const thresholds: RarityThresholds = meta?.rarityThresholds ?? {
+    stapleMax: RARITY_STAPLE_MAX_FALLBACK,
+    rareMin: RARITY_RARE_MIN_FALLBACK,
+  };
   const total = Array.isArray(job.events) ? job.events.length : 0;
   const s = total === 1 ? "" : "s";
-  const subject = `Spirit Tracker: ${total} update${s}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const subject = `Spirit Tracker ${today}: ${total} update${s}`;
 
   const order: EmailEventType[] = ["PRICE_DROP", "GLOBAL_NEW", "GLOBAL_RETURN", "OUT_OF_STOCK"];
   const groups = new Map<EmailEventType, MatchedEmailEvent[]>();
@@ -535,7 +544,7 @@ export function buildEmailAlert(
   <div style="font-size:14px;font-weight:900;color:#0f172a;margin:0 0 6px;">
     ${escHtml(groupTitle(t))} <span style="color:#64748b;font-weight:800;">(${arr.length})</span>
   </div>
-  ${arr.map(renderEventCard).join("")}
+  ${arr.map((ev) => renderEventCard(ev, thresholds)).join("")}
 </div>
       `.trim();
     })

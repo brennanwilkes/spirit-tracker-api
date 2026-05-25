@@ -470,6 +470,15 @@ export function validateEmailEventPackV1(body: any): EmailEventPackV1 {
       ? { fromSha: String(body.range.fromSha || ""), toSha: String(body.range.toSha || "") }
       : undefined,
     stats: body.stats,
+    rarityThresholds:
+      body.rarityThresholds &&
+      typeof body.rarityThresholds === "object" &&
+      typeof body.rarityThresholds.stapleMax === "number" &&
+      Number.isFinite(body.rarityThresholds.stapleMax) &&
+      typeof body.rarityThresholds.rareMin === "number" &&
+      Number.isFinite(body.rarityThresholds.rareMin)
+        ? { stapleMax: body.rarityThresholds.stapleMax, rareMin: body.rarityThresholds.rareMin }
+        : undefined,
     skus,
     events,
   };

@@ -121,6 +121,10 @@ export type EmailEventPackV1 = {
   generatedAt: string;
   range?: { fromSha: string; toSha: string };
   stats?: any;
+  // Effective rarity tier thresholds computed by the viz pipeline.
+  // Renderers (email) should use these in preference to hardcoded fallbacks,
+  // so tier classification stays in sync with the viz as the distribution drifts.
+  rarityThresholds?: { stapleMax: number; rareMin: number };
   skus: Record<string, EmailPackSkuV1>;
   events: EmailPackEventV1[];
 };
