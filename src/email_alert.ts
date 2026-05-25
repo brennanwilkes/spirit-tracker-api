@@ -345,13 +345,25 @@ function tierForRarity(r: number | undefined, t: RarityThresholds): RarityTier {
   return "common";
 }
 
-// Gold diamond pattern, identical to viz light-theme (deeper goldenrod for
-// legibility on a pale card). Two tiny diamonds per 28px tile, offset along
-// the diagonal so dots fall on diagonal rows.
-// Inside style="..." attributes, raw double quotes terminate the attribute
-// early. Use &quot; so HTML parsing yields proper url("...") CSS.
-const RARE_DIAMOND_DATA_URI =
-  "url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><polygon points='7,5 9,7 7,9 5,7' fill='%23b8860b' fill-opacity='0.30'/><polygon points='21,19 23,21 21,23 19,21' fill='%23b8860b' fill-opacity='0.30'/></svg>&quot;)";
+// Gold star pattern for rare cards. Two 5-pointed stars per 28px tile,
+// offset along the diagonal so dots fall on diagonal rows. Base64-encoded
+// so the data URI contains only [A-Za-z0-9+/=], which means url(...) needs
+// no quotes at all — avoiding HTML attribute escaping headaches and the
+// quirks several email clients have with quoted/utf8 data URIs.
+const RARE_STAR_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'>" +
+  "<polygon points='7,2 8.5,5.5 12.2,5.8 9.4,8.2 10.3,11.8 7,9.9 3.7,11.8 4.6,8.2 1.8,5.8 5.5,5.5' fill='#b8860b' fill-opacity='0.55'/>" +
+  "<polygon points='21,16 22.5,19.5 26.2,19.8 23.4,22.2 24.3,25.8 21,23.9 17.7,25.8 18.6,22.2 15.8,19.8 19.5,19.5' fill='#b8860b' fill-opacity='0.55'/>" +
+  "</svg>";
+
+function toBase64(s: string): string {
+  // btoa is available in Cloudflare Workers and modern Node; the SVG is ASCII-only.
+  if (typeof btoa === "function") return btoa(s);
+  // Node fallback for tests.
+  return (globalThis as any).Buffer.from(s, "utf8").toString("base64");
+}
+
+const RARE_STAR_DATA_URI = `url(data:image/svg+xml;base64,${toBase64(RARE_STAR_SVG)})`;
 
 function cardOuterStyle(tier: RarityTier): string {
   if (tier === "staple") {
@@ -364,24 +376,32 @@ function cardOuterStyle(tier: RarityTier): string {
     ].join(";");
   }
   if (tier === "rare") {
-    // Layered background: (1) cover gradient that fades the pattern past the
-    // diagonal back to white, (2) gold diamond polka-dot pattern, (3) purple
-    // radial wash anchored at the top-left corner.
+    // Layered background (back-to-front in CSS terms, so listed first = on top):
+    //   1. coverGradient — fades the pattern past the diagonal back to white,
+    //      so the bottom-right of the card stays clean for text legibility.
+    //   2. RARE_STAR_DATA_URI — gold star polka-dot pattern (the showpiece).
+    //   3. goldWash — a warm gold radial-gradient anchored where the stars
+    //      cluster. Pure-CSS, so it survives email clients that strip the
+    //      data-URI pattern, guaranteeing the card still reads as "gold."
+    //   4. purpleWash — purple radial-gradient anchored at top-left for the
+    //      structural rare wash.
     const coverGradient =
-      "linear-gradient(135deg, transparent 0%, transparent 18%, #ffffff 45%, #ffffff 100%)";
+      "linear-gradient(135deg, transparent 0%, transparent 22%, #ffffff 48%, #ffffff 100%)";
+    const goldWash =
+      "radial-gradient(ellipse 80% 80% at 12% 12%, rgba(212,175,55,0.32) 0%, rgba(212,175,55,0.14) 35%, transparent 65%)";
     const purpleWash =
-      "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.16) 0%, rgba(126,34,206,0.06) 30%, transparent 60%)";
+      "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.22) 0%, rgba(126,34,206,0.08) 30%, transparent 60%)";
 
     return [
       "border:1px solid rgba(126,34,206,0.85)",
       "background-color:#ffffff",
-      `background-image:${coverGradient}, ${RARE_DIAMOND_DATA_URI}, ${purpleWash}`,
-      "background-size:auto, 28px 28px, auto",
-      "background-position:0 0",
-      "background-repeat:no-repeat, repeat, no-repeat",
+      `background-image:${coverGradient}, ${RARE_STAR_DATA_URI}, ${goldWash}, ${purpleWash}`,
+      "background-size:auto, 28px 28px, auto, auto",
+      "background-position:0 0, 0 0, 0 0, 0 0",
+      "background-repeat:no-repeat, repeat, no-repeat, no-repeat",
       "border-radius:14px",
       "margin:10px 0",
-      "box-shadow:0 0 12px rgba(126,34,206,0.15), 0 6px 18px rgba(126,34,206,0.15)",
+      "box-shadow:0 0 16px rgba(126,34,206,0.22), 0 6px 22px rgba(126,34,206,0.22)",
     ].join(";");
   }
   // common — original styling
@@ -478,8 +498,16 @@ export function buildEmailAlert(
   };
   const total = Array.isArray(job.events) ? job.events.length : 0;
   const s = total === 1 ? "" : "s";
-  const today = new Date().toISOString().slice(0, 10);
-  const subject = `Spirit Tracker ${today}: ${total} update${s}`;
+  // Subject must vary per day so threading in clients like Gmail / Apple Mail
+  // doesn't collapse every daily digest into one rolling conversation.
+  const today = new Date();
+  const dateLabel = today.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "America/Los_Angeles",
+  });
+  const subject = `Spirit Tracker — ${dateLabel} — ${total} update${s}`;
 
   const order: EmailEventType[] = ["PRICE_DROP", "GLOBAL_NEW", "GLOBAL_RETURN", "OUT_OF_STOCK"];
   const groups = new Map<EmailEventType, MatchedEmailEvent[]>();
