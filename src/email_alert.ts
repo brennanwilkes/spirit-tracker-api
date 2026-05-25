@@ -345,25 +345,14 @@ function tierForRarity(r: number | undefined, t: RarityThresholds): RarityTier {
   return "common";
 }
 
-// Gold star pattern for rare cards. Two 5-pointed stars per 28px tile,
-// offset along the diagonal so dots fall on diagonal rows. Base64-encoded
-// so the data URI contains only [A-Za-z0-9+/=], which means url(...) needs
-// no quotes at all — avoiding HTML attribute escaping headaches and the
-// quirks several email clients have with quoted/utf8 data URIs.
-const RARE_STAR_SVG =
-  "<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'>" +
-  "<polygon points='7,2 8.5,5.5 12.2,5.8 9.4,8.2 10.3,11.8 7,9.9 3.7,11.8 4.6,8.2 1.8,5.8 5.5,5.5' fill='#b8860b' fill-opacity='0.55'/>" +
-  "<polygon points='21,16 22.5,19.5 26.2,19.8 23.4,22.2 24.3,25.8 21,23.9 17.7,25.8 18.6,22.2 15.8,19.8 19.5,19.5' fill='#b8860b' fill-opacity='0.55'/>" +
-  "</svg>";
-
-function toBase64(s: string): string {
-  // btoa is available in Cloudflare Workers and modern Node; the SVG is ASCII-only.
-  if (typeof btoa === "function") return btoa(s);
-  // Node fallback for tests.
-  return (globalThis as any).Buffer.from(s, "utf8").toString("base64");
-}
-
-const RARE_STAR_DATA_URI = `url(data:image/svg+xml;base64,${toBase64(RARE_STAR_SVG)})`;
+// Gold star pattern for rare cards. The source SVG is committed at
+// viz/email-assets/rare-stars.svg and served from the static site by the
+// Pages deploy. Hosted at an https URL (rather than embedded as a data URI)
+// because Gmail's desktop sanitizer strips `background-image:url(data:...)`,
+// even though every other major client renders data URIs fine. With a hosted
+// URL, Gmail proxies the image through googleusercontent and shows it.
+const RARE_STAR_URL = `${SITE}/email-assets/rare-stars.svg`;
+const RARE_STAR_DATA_URI = `url(${RARE_STAR_URL})`;
 
 function cardOuterStyle(tier: RarityTier): string {
   if (tier === "staple") {
@@ -380,25 +369,19 @@ function cardOuterStyle(tier: RarityTier): string {
     //   1. coverGradient — fades the pattern past the diagonal back to white,
     //      so the bottom-right of the card stays clean for text legibility.
     //   2. RARE_STAR_DATA_URI — gold star polka-dot pattern (the showpiece).
-    //   3. goldWash — a warm gold radial-gradient anchored where the stars
-    //      cluster. Pure-CSS, so it survives email clients that strip the
-    //      data-URI pattern, guaranteeing the card still reads as "gold."
-    //   4. purpleWash — purple radial-gradient anchored at top-left for the
-    //      structural rare wash.
+    //   3. purpleWash — purple radial-gradient anchored at top-left.
     const coverGradient =
       "linear-gradient(135deg, transparent 0%, transparent 22%, #ffffff 48%, #ffffff 100%)";
-    const goldWash =
-      "radial-gradient(ellipse 80% 80% at 12% 12%, rgba(212,175,55,0.32) 0%, rgba(212,175,55,0.14) 35%, transparent 65%)";
     const purpleWash =
       "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.22) 0%, rgba(126,34,206,0.08) 30%, transparent 60%)";
 
     return [
       "border:1px solid rgba(126,34,206,0.85)",
       "background-color:#ffffff",
-      `background-image:${coverGradient}, ${RARE_STAR_DATA_URI}, ${goldWash}, ${purpleWash}`,
-      "background-size:auto, 28px 28px, auto, auto",
-      "background-position:0 0, 0 0, 0 0, 0 0",
-      "background-repeat:no-repeat, repeat, no-repeat, no-repeat",
+      `background-image:${coverGradient}, ${RARE_STAR_DATA_URI}, ${purpleWash}`,
+      "background-size:auto, 28px 28px, auto",
+      "background-position:0 0, 0 0, 0 0",
+      "background-repeat:no-repeat, repeat, no-repeat",
       "border-radius:14px",
       "margin:10px 0",
       "box-shadow:0 0 16px rgba(126,34,206,0.22), 0 6px 22px rgba(126,34,206,0.22)",
