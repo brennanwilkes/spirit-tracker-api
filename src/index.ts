@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword } from './password';
 import { getAccountResource, getDetails, getEmailIndex, keys, putAccountResource, putEmailIndex, defaultValue } from './storage';
 import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, validatePasswordResetConfirm, validateScore, validateStringArray, validateBoolMap, validateScorePatch, normalizeEmail, validateEmailEventPackV1 } from './validate';
 import { handleOauth } from './oauth';
+import { handleProxy } from './proxy';
 import { sendMailSmtp } from './smtp';
 import { buildEmailAlert } from "./email_alert";
 
@@ -796,6 +797,11 @@ async function router(req: Request, env: Env): Promise<Response> {
   if (pathname === '/email') {
     if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
     return handleEmailPack(req, env);
+  }
+
+  if (pathname === '/proxy') {
+    if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
+    return handleProxy(req, env);
   }
 
   const acct = parseAccountRoute(pathname);
