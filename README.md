@@ -31,15 +31,6 @@ Methods:
   - always requires JWT with `sub === :uuid`
   - replaces the whole JSON blob
 
-### Scrape proxy (HMAC, for the tracker CI)
-- `POST /proxy` → `{ url, method?, headers?, body? }` → `{ status, finalUrl, headers, setCookie[], body }`
-  - Auth: HMAC headers `X-Spirit-Timestamp` + `X-Spirit-Signature: v1=<hex>` over `${ts}.${rawBody}`, using `EMAIL_PACK_HMAC_SECRET` (same scheme as `/email`).
-  - **Host-allowlisted** (`PROXY_ALLOW_SUFFIXES` in `src/proxy.ts`) — NOT an open proxy.
-  - Purpose: lend Cloudflare-egress IP reputation to scrapes that the tracker's
-    GitHub-runner (Azure datacenter) IP gets a "Just a moment…" challenge on. The
-    tracker (`spirit-tracker` repo, `src/core/http.js`) falls back to a direct fetch
-    on any failure, incl. free-tier **Error 1027** (100k req/day).
-
 ## KV layout (single namespace)
 
 - Email index: `auth/email/<normalizedEmail>`
