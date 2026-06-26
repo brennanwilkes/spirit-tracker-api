@@ -399,7 +399,7 @@ function skuInShortlist(pack: EmailEventPackV1, canonSku: string, favs: Set<stri
   return false;
 }
 
-function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, favs: Set<string>): boolean {
+function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, favs: Set<string>, myStores: Set<string> | null): boolean {
   if (!rule.enabled) return false;
   if (ev.eventType !== rule.eventType) return false;
 
@@ -414,8 +414,11 @@ function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, fa
 
   const f = rule.filters || {};
 
-  // store filter — multi-select `storeIds` (any-of) supersedes legacy single `storeId`
-  if (Array.isArray(f.storeIds) && f.storeIds.length) {
+  // store filter — "My Stores" (the user's live saved set) supersedes the
+  // multi-select `storeIds` (any-of), which supersedes the legacy single `storeId`.
+  if (f.useMyStores === true) {
+    if (!myStores || !myStores.has(String(ev.storeId || ""))) return false;
+  } else if (Array.isArray(f.storeIds) && f.storeIds.length) {
     if (!f.storeIds.includes(String(ev.storeId || ""))) return false;
   } else if (typeof f.storeId === "string" && f.storeId.trim()) {
     if (String(ev.storeId || "") !== f.storeId.trim()) return false;
@@ -470,7 +473,7 @@ function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, fa
   return true;
 }
 
-function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: Set<string>): MatchedEmailEvent[] {
+function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: Set<string>, myStores: Set<string> | null): MatchedEmailEvent[] {
   const byId = new Map<string, MatchedEmailEvent>();        // store-level (acrossMarket=false)
   const byMarket = new Map<string, MatchedEmailEvent>();    // market-level (acrossMarket=true)
 
@@ -480,7 +483,7 @@ function matchEventsForUser(pack: EmailEventPackV1, rules: EmailRuleV1[], favs: 
     const across = ruleAcrossMarket(rule);
 
     for (const ev of pack.events) {
-      if (!ruleMatchesEvent(pack, rule, ev, favs)) continue;
+      if (!ruleMatchesEvent(pack, rule, ev, favs, myStores)) continue;
 
       const skuObj = pack.skus[ev.sku];
       const m: MatchedEmailEvent = {
@@ -603,7 +606,15 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
         }
       }
 
-      const matched = matchEventsForUser(pack, rules, favs);
+      // "My Stores" rules resolve against the user's live saved set at match time.
+      const needsMyStores = rules.some((r: any) => r?.filters?.useMyStores === true);
+      let myStores: Set<string> | null = null;
+      if (needsMyStores) {
+        const storeArr = await getAccountResource(env, userId, "stores");
+        myStores = new Set(Array.isArray(storeArr) ? storeArr.filter((x: any) => typeof x === "string") : []);
+      }
+
+      const matched = matchEventsForUser(pack, rules, favs, myStores);
       if (!matched.length) continue;
 
       matchedAccounts++;

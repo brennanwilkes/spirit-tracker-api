@@ -45,6 +45,7 @@ export type EmailRuleV1 = {
   filters?: {
     storeId?: string;          // legacy single store, e.g. "kwm"
     storeIds?: string[];       // multi-select store filter, e.g. ["kwm","bsw"] — any-of
+    useMyStores?: boolean;     // dynamic ref to the user's saved "My Stores" set (any-of)
     acrossMarket?: boolean;    // apply to all stores (same bottle)
     spiritTypes?: string[];    // e.g. ["rum", "whisky"] — any-of match
 

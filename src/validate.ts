@@ -144,8 +144,12 @@ function validateEmailRuleV1(x: any): EmailRuleV1 {
     if (kwAny.length) out.keywordsAny = kwAny;
     if (kwNone.length) out.keywordsNone = kwNone;
 
-    // store filter — multi-select `storeIds` (array of slugs) supersedes the
-    // legacy single `storeId`; both are validated for backward compatibility.
+    // store filter — "My Stores" (dynamic per-user ref) > multi `storeIds` > legacy `storeId`.
+    if (filtersIn.useMyStores != null) {
+      if (typeof filtersIn.useMyStores !== "boolean") throw new Error("useMyStores must be boolean");
+      if (filtersIn.useMyStores) out.useMyStores = true;
+    }
+
     if (filtersIn.storeIds != null) {
       if (!Array.isArray(filtersIn.storeIds)) throw new Error("storeIds must be an array");
       const ids = filtersIn.storeIds
