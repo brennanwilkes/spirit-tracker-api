@@ -45,6 +45,7 @@ export function defaultValue(resource: Resource): unknown {
       };
     case 'favourites':
     case 'sampled':
+    case 'stores':
       return [];
     case 'score':
       return {} as Score;

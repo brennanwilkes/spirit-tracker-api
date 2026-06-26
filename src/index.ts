@@ -414,8 +414,10 @@ function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, fa
 
   const f = rule.filters || {};
 
-  // store filter
-  if (typeof f.storeId === "string" && f.storeId.trim()) {
+  // store filter — multi-select `storeIds` (any-of) supersedes legacy single `storeId`
+  if (Array.isArray(f.storeIds) && f.storeIds.length) {
+    if (!f.storeIds.includes(String(ev.storeId || ""))) return false;
+  } else if (typeof f.storeId === "string" && f.storeId.trim()) {
     if (String(ev.storeId || "") !== f.storeId.trim()) return false;
   }
 
@@ -739,6 +741,9 @@ async function handleAccountPut(req: Request, env: Env, userId: string, resource
       break;
     case 'sampled':
       value = validateStringArray(body, 'sampled');
+      break;
+    case 'stores':
+      value = validateStringArray(body, 'stores');
       break;
     case 'score':
       value = validateScore(body);

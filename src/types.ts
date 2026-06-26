@@ -43,7 +43,8 @@ export type EmailRuleV1 = {
   scope: "all" | "shortlist";
   eventType: EmailEventType;
   filters?: {
-    storeId?: string;          // e.g. "kwm"
+    storeId?: string;          // legacy single store, e.g. "kwm"
+    storeIds?: string[];       // multi-select store filter, e.g. ["kwm","bsw"] — any-of
     acrossMarket?: boolean;    // apply to all stores (same bottle)
     spiritTypes?: string[];    // e.g. ["rum", "whisky"] — any-of match
 

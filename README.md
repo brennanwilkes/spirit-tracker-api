@@ -21,6 +21,7 @@ Resources:
 - `details` (object, must include `public: boolean`)
 - `favourites` (array of strings)
 - `sampled` (array of strings)
+- `stores` (array of strings — the user's saved "My Stores" set, i.e. store ids)
 - `score` (object map `{ "someKey": number }`)
 
 Methods:
@@ -39,6 +40,7 @@ Methods:
   - `acct/<uuid>/details`
   - `acct/<uuid>/favourites`
   - `acct/<uuid>/sampled`
+  - `acct/<uuid>/stores`
   - `acct/<uuid>/score`
 
 Email normalization: `trim()` + lowercase.

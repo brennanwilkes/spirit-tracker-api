@@ -144,8 +144,15 @@ function validateEmailRuleV1(x: any): EmailRuleV1 {
     if (kwAny.length) out.keywordsAny = kwAny;
     if (kwNone.length) out.keywordsNone = kwNone;
 
-    // store filter
-    if (filtersIn.storeId != null) {
+    // store filter — multi-select `storeIds` (array of slugs) supersedes the
+    // legacy single `storeId`; both are validated for backward compatibility.
+    if (filtersIn.storeIds != null) {
+      if (!Array.isArray(filtersIn.storeIds)) throw new Error("storeIds must be an array");
+      const ids = filtersIn.storeIds
+        .map((s: unknown) => String(s || "").trim())
+        .filter((s: string) => s && STORE_ID_RE.test(s));
+      if (ids.length) out.storeIds = [...new Set<string>(ids)].slice(0, 64);
+    } else if (filtersIn.storeId != null) {
       const s = String(filtersIn.storeId || "").trim();
       if (!s || !STORE_ID_RE.test(s)) throw new Error("storeId must be a small slug");
       out.storeId = s;
