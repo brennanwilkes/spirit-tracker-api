@@ -401,7 +401,12 @@ function skuInShortlist(pack: EmailEventPackV1, canonSku: string, favs: Set<stri
 
 function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, favs: Set<string>, myStores: Set<string> | null): boolean {
   if (!rule.enabled) return false;
-  if (ev.eventType !== rule.eventType) return false;
+  const across = ruleAcrossMarket(rule);
+  if (ev.eventType !== rule.eventType) {
+    if (!(across && rule.eventType === "GLOBAL_RETURN" && ev.eventType === "GLOBAL_NEW" && ev.marketReturn === true)) {
+      return false;
+    }
+  }
 
   const skuObj = pack.skus[ev.sku];
   const skuName = skuObj?.name || "";
@@ -449,7 +454,6 @@ function ruleMatchesEvent(pack: EmailEventPackV1, rule: EmailRuleV1, ev: any, fa
   }
 
   // acrossMarket semantics for the 3 event types
-  const across = ruleAcrossMarket(rule);
   if (across) {
     if (rule.eventType === "GLOBAL_NEW" && ev.marketNew !== true) return false;
     if (rule.eventType === "GLOBAL_RETURN" && ev.marketReturn !== true) return false;
