@@ -52,6 +52,12 @@ function itemUrl(sku: string): string {
   return `${SITE}/#/item/${encodeURIComponent(String(sku || "").trim())}`;
 }
 
+// A collision-split key `c:<sku>:<tag>` (spirit-tracker data/sku_collisions.json) displays as its bare sku.
+function displaySku(sku: string): string {
+  const m = sku.match(/^c:([^:]+):[a-z0-9]+$/);
+  return m ? m[1] : sku;
+}
+
 function commitUrl(sha: string): string {
   return `${REPO}/commit/${encodeURIComponent(sha)}`;
 }
@@ -234,7 +240,7 @@ function buildSummaryParagraph(events: MatchedEmailEvent[], total: number): { ht
   if (total > 10) {
     sentences.push(`Here’s a quick skim before you dive in.`);
     if (bestDeal) {
-      const name = bestDeal.skuName || `(SKU ${bestDeal.sku})`;
+      const name = bestDeal.skuName || `(SKU ${displaySku(bestDeal.sku)})`;
       const store = String(bestDeal.storeLabel || "").trim();
       const oldP = String(bestDeal.oldPrice || "").trim();
       const newP = String(bestDeal.newPrice || "").trim();
@@ -408,7 +414,7 @@ function titleBorderColor(tier: RarityTier): string {
 function renderEventCard(ev: MatchedEmailEvent, thresholds: RarityThresholds): string {
   const url = itemUrl(ev.sku);
   const img = String(ev.skuImg || "").trim();
-  const name = ev.skuName || `(SKU ${ev.sku})`;
+  const name = ev.skuName || `(SKU ${displaySku(ev.sku)})`;
   const store = String(ev.storeLabel || "").trim();
   const pills = pickBadges(ev);
   const priceHtml = renderPriceHtml(ev);
@@ -521,7 +527,7 @@ export function buildEmailAlert(
     lines.push(`${groupTitle(t)} (${arr.length})`);
     for (const ev of arr) {
       const url = itemUrl(ev.sku);
-      const name = ev.skuName || `(SKU ${ev.sku})`;
+      const name = ev.skuName || `(SKU ${displaySku(ev.sku)})`;
 
       if (ev.eventType === "PRICE_DROP") {
         const oldP = String(ev.oldPrice || "").trim();
