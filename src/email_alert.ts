@@ -351,14 +351,18 @@ function tierForRarity(r: number | undefined, t: RarityThresholds): RarityTier {
   return "common";
 }
 
-// Gold star pattern for rare cards. The source SVG is committed at
-// viz/email-assets/rare-stars.svg and served from the static site by the
-// Pages deploy. Hosted at an https URL (rather than embedded as a data URI)
-// because Gmail's desktop sanitizer strips `background-image:url(data:...)`,
-// even though every other major client renders data URIs fine. With a hosted
-// URL, Gmail proxies the image through googleusercontent and shows it.
-const RARE_STAR_URL = `${SITE}/email-assets/rare-stars.svg`;
-const RARE_STAR_DATA_URI = `url(${RARE_STAR_URL})`;
+// Gold star pattern for rare cards, with its diagonal fade baked into the image.
+// The source SVG is committed at viz/email-assets/rare-stars-fade.svg and served
+// from the static site by the Pages deploy. Hosted at an https URL (rather than
+// embedded as a data URI) because Gmail's desktop sanitizer strips
+// `background-image:url(data:...)`, even though every other major client renders
+// data URIs fine. With a hosted URL, Gmail proxies the image through
+// googleusercontent and shows it.
+//
+// No opaque colour may sit in a gradient layer. Gmail's dark mode inverts solid
+// colours (background-color, text) but never gradients: the old fade, a gradient
+// to #ffffff over a repeating tile, stayed white under the inverted light text.
+const RARE_STAR_URL = `${SITE}/email-assets/rare-stars-fade.svg`;
 
 function cardOuterStyle(tier: RarityTier): string {
   if (tier === "staple") {
@@ -371,23 +375,19 @@ function cardOuterStyle(tier: RarityTier): string {
     ].join(";");
   }
   if (tier === "rare") {
-    // Layered background (back-to-front in CSS terms, so listed first = on top):
-    //   1. coverGradient — fades the pattern past the diagonal back to white,
-    //      so the bottom-right of the card stays clean for text legibility.
-    //   2. RARE_STAR_DATA_URI — gold star polka-dot pattern (the showpiece).
-    //   3. purpleWash — purple radial-gradient anchored at top-left.
-    const coverGradient =
-      "linear-gradient(135deg, transparent 0%, transparent 22%, #ffffff 48%, #ffffff 100%)";
+    // Layered background (listed first = on top):
+    //   1. RARE_STAR_URL — gold stars fading out along the diagonal, so the
+    //      bottom-right of the card stays clean for text legibility.
+    //   2. purpleWash — purple radial-gradient anchored at top-left.
     const purpleWash =
       "radial-gradient(ellipse 110% 110% at 0% 0%, rgba(126,34,206,0.22) 0%, rgba(126,34,206,0.08) 30%, transparent 60%)";
 
     return [
       "border:1px solid rgba(126,34,206,0.85)",
       "background-color:#ffffff",
-      `background-image:${coverGradient}, ${RARE_STAR_DATA_URI}, ${purpleWash}`,
-      "background-size:auto, 28px 28px, auto",
-      "background-position:0 0, 0 0, 0 0",
-      "background-repeat:no-repeat, repeat, no-repeat",
+      `background-image:url(${RARE_STAR_URL}), ${purpleWash}`,
+      "background-position:0 0, 0 0",
+      "background-repeat:no-repeat, no-repeat",
       "border-radius:14px",
       "margin:10px 0",
       "box-shadow:0 0 16px rgba(126,34,206,0.22), 0 6px 22px rgba(126,34,206,0.22)",
