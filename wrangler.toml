@@ -13,6 +13,10 @@ GITHUB_CLIENT_ID = "Ov23libK463TurCqoPz1"
 MAIL_HOST = "smtp-relay.gmail.com"
 MAIL_PORT = 465
 
+# Clock for the spirit-tracker scrape workflow; src/tracker_schedule.ts picks the Pacific slots.
+[triggers]
+crons = ["25,48 * * * *"]
+
 [[kv_namespaces]]
 binding = "AUTH_KV"
 id = "__KV_ID__"

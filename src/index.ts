@@ -10,6 +10,7 @@ import { readJson, validateDetails, validateEmailOnly, validateEmailPassword, va
 import { handleOauth } from './oauth';
 import { sendMailSmtp } from './smtp';
 import { buildEmailAlert } from "./email_alert";
+import { dispatchTrackerRun } from './tracker_schedule';
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let t: any;
@@ -848,6 +849,10 @@ export default {
     
       return errorJson(req, status, msg);
     }
+  },
+
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    await dispatchTrackerRun(controller.scheduledTime, env);
   }
 };
 

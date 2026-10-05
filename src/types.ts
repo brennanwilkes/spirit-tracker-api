@@ -12,6 +12,9 @@ export interface Env {
 
   EMAIL_PACK_HMAC_SECRET: string;
 
+  // Fine-grained PAT: spirit-tracker repo only, Actions read+write. Set by GH actions.
+  GH_DISPATCH_TOKEN: string;
+
   // SMTP creds + config
   MAIL_HOST: string;          // e.g. "smtp.mailgun.org" or "smtp.gmail.com"
   MAIL_PORT: string;          // e.g. "587" (STARTTLS) or "465" (TLS)
