@@ -13,6 +13,10 @@ GITHUB_CLIENT_ID = "Ov23libK463TurCqoPz1"
 MAIL_HOST = "smtp-relay.gmail.com"
 MAIL_PORT = 465
 
+# Workers Logs, so a failed tracker dispatch (thrown in src/tracker_schedule.ts) is visible.
+[observability]
+enabled = true
+
 # Clock for the spirit-tracker scrape workflow; src/tracker_schedule.ts picks the Pacific slots.
 [triggers]
 crons = ["25,48 * * * *"]

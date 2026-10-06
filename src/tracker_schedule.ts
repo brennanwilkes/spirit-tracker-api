@@ -33,6 +33,7 @@ export function trackerSlotFor(scheduledTimeMs: number): { mode: 'big' | 'small'
 // Fire-and-forget: one request, no retries, no KV. A failed dispatch only skips that slot.
 export async function dispatchTrackerRun(scheduledTimeMs: number, env: Env): Promise<void> {
   const slot = trackerSlotFor(scheduledTimeMs);
+  console.log(`tracker cron: pacific=${PACIFIC_HHMM.format(new Date(scheduledTimeMs))} slot=${slot === null ? 'none' : slot.mode} tokenLen=${env.GH_DISPATCH_TOKEN?.length ?? 'unset'}`);
   if (slot === null) return;
 
   const res = await fetch(
