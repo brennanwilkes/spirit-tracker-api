@@ -2,7 +2,8 @@ export const ALLOWED_ORIGIN = 'https://spirit.codexwilkes.com';
 
 export const JSON_CT = 'application/json; charset=utf-8';
 
-export const JWT_TTL_SECONDS = 7 * 24 * 60 * 60; // One week
+// Sliding: clients renew via POST /auth/refresh, so only 30 days of disuse logs a user out.
+export const JWT_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 export const EMAIL_VERIFY_TTL_SECONDS = 24 * 60 * 60; // 24h
 export const PASSWORD_RESET_TTL_SECONDS = 30 * 60; // 30m

@@ -11,6 +11,9 @@ export async function requireAuthSub(req: Request, env: Env): Promise<string> {
   const token = bearerToken(req);
   if (!token) throw new Error('Missing bearer token');
   const p = await verifyJwt(token, env.JWT_SECRET, { iss: env.JWT_ISS, aud: env.JWT_AUD });
+  // Email-verify and password-reset tokens share the secret, iss and aud, so without this an
+  // emailed link would work as a session token (and /auth/refresh would renew it forever).
+  if (p.typ !== undefined) throw new Error('Invalid token type');
   return p.sub;
 }
 

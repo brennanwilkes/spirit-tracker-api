@@ -799,6 +799,12 @@ async function router(req: Request, env: Env): Promise<Response> {
     return handleLogin(req, env);
   }
 
+  if (pathname === '/auth/refresh') {
+    if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
+    const userId = await requireAuthSub(req, env);
+    return json(req, 200, { token: await issueToken(env, userId), userId });
+  }
+
   if (pathname === '/verify-email') {
     if (req.method !== 'GET') return errorJson(req, 405, 'Method not allowed');
     return handleVerifyEmail(req, env);
