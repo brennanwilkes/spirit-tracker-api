@@ -9,6 +9,7 @@ type Mail = {
   subject: string;
   text: string;
   html?: string; // NEW
+  listUnsubscribe?: string; // URL accepting RFC 8058 one-click POST
 };
 
 function b64Std(bytes: Uint8Array): string {
@@ -269,6 +270,10 @@ export async function sendMailSmtp(env: Env, mail: Mail): Promise<void> {
       `Date: ${formatDate()}\r\n` +
       `Message-ID: ${msgId}\r\n` +
       `MIME-Version: 1.0\r\n` +
+      (mail.listUnsubscribe
+        ? `List-Unsubscribe: <${mail.listUnsubscribe}>\r\n` +
+          `List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n`
+        : "") +
       `${mimeHeaders.join("\r\n")}\r\n` +
       `\r\n` +
       `${bodyStuffed}\r\n` +

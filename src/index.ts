@@ -2,7 +2,7 @@ import { RESOURCES, UUID_RE, JWT_TTL_SECONDS, EMAIL_VERIFY_TTL_SECONDS, PASSWORD
 import type { Env, EmailEventPackV1, EmailRuleV1 } from './types';
 import { handleOptions } from './cors';
 import { errorJson, json } from './http';
-import { requireAuthSub, requireEmailPackHmac } from './auth';
+import { requireAuthSub, requireEmailPackHmac, unsubscribeSig, verifyUnsubscribeSig } from './auth';
 import { signJwt, verifyJwt } from './jwt';
 import { hashPassword, verifyPassword } from './password';
 import { getAccountResource, getDetails, getEmailIndex, keys, putAccountResource, putEmailIndex, defaultValue } from './storage';
@@ -658,6 +658,10 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
       const commitSha = pack?.range && typeof (pack as any).range?.toSha === "string" ? String((pack as any).range.toSha).trim() : undefined;
       const rarityThresholds = pack?.rarityThresholds;
 
+      const unsubUrl = new URL('/unsubscribe', new URL(req.url).origin);
+      unsubUrl.searchParams.set('u', job.userId);
+      unsubUrl.searchParams.set('sig', await unsubscribeSig(env, job.userId));
+
       const email = buildEmailAlert(
         {
           userId: job.userId,
@@ -665,6 +669,7 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
           shortlistName: "", // ignored
           eventCount: job.eventCount,
           events: job.events,
+          unsubUrl: unsubUrl.toString(),
         },
         { commitSha, rarityThresholds },
       );
@@ -675,6 +680,7 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
           subject: email.subject,
           text: email.text,
           html: email.html,
+          listUnsubscribe: unsubUrl.toString(),
         }),
         STEP_MS,
         "sendMailSmtp(email pack)"
@@ -700,6 +706,52 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
   });
 }
 
+
+function htmlPage(status: number, title: string, bodyHtml: string): Response {
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${title}</title>
+  </head>
+  <body style="margin:0;padding:48px 16px;background:#f4f6f9;color:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;text-align:center;">
+    <h1 style="font-size:20px;">${title}</h1>
+    ${bodyHtml}
+  </body>
+</html>`;
+  return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+
+// GET only renders a confirm button: mail scanners prefetch links, and a GET that cleared rules
+// would silently unsubscribe those users. POST (the button, or RFC 8058 one-click) does the clear.
+async function handleUnsubscribe(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const userId = url.searchParams.get('u') || '';
+  const sig = url.searchParams.get('sig') || '';
+
+  if (!UUID_RE.test(userId) || !(await verifyUnsubscribeSig(env, userId, sig))) {
+    return htmlPage(400, 'Invalid unsubscribe link', '<p>This link is invalid. You can manage email notifications from your settings.</p>');
+  }
+
+  if (req.method === 'GET') {
+    return htmlPage(
+      200,
+      'Unsubscribe from Spirit Tracker emails?',
+      `<p>This removes all of your email notification rules.</p>
+    <form method="post">
+      <button type="submit" style="background:#0f172a;color:#ffffff;border:0;border-radius:12px;padding:10px 16px;font-size:14px;font-weight:800;cursor:pointer;">Unsubscribe</button>
+    </form>`
+    );
+  }
+
+  const details = await getDetails(env, userId);
+  if (details === null) throw new Error(`Unsubscribe: no details for ${userId}`);
+
+  await putAccountResource(env, userId, 'details', { ...details, emailNotifications: { version: 1, rules: [] } });
+
+  return htmlPage(200, 'You’re unsubscribed', '<p>You won’t receive any more Spirit Tracker alert emails. You can set up new rules from your settings at any time.</p>');
+}
 
 function parseAccountRoute(pathname: string): { userId: string; resource: (typeof RESOURCES)[number] } | null {
   const clean = trimTrailingSlashes(pathname);
@@ -823,6 +875,11 @@ async function router(req: Request, env: Env): Promise<Response> {
   if (pathname === '/email') {
     if (req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
     return handleEmailPack(req, env);
+  }
+
+  if (pathname === '/unsubscribe') {
+    if (req.method !== 'GET' && req.method !== 'POST') return errorJson(req, 405, 'Method not allowed');
+    return handleUnsubscribe(req, env);
   }
 
   const acct = parseAccountRoute(pathname);

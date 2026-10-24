@@ -35,6 +35,7 @@ export type EmailAlertJob = {
   shortlistName: string; // unused
   eventCount: number; // unused
   events: MatchedEmailEvent[];
+  unsubUrl: string;
 };
 
 const REPO = "https://github.com/brennanwilkes/spirit-tracker";
@@ -551,6 +552,8 @@ export function buildEmailAlert(
 
   lines.push(`Commit: ${shaShort}`);
   lines.push(`View full report: ${reportHref}`);
+  lines.push("");
+  lines.push(`Unsubscribe: ${job.unsubUrl}`);
 
   const sections = order
     .map((t) => {
@@ -616,6 +619,7 @@ export function buildEmailAlert(
                 ${footerHtml}
                 <div style="margin-top:16px;color:#94a3b8;font-size:11px;line-height:1.5;">
                   You’re receiving this because email notifications are enabled.
+                  <a href="${escHtml(job.unsubUrl)}" style="color:#94a3b8;text-decoration:underline;">Unsubscribe</a>
                 </div>
               </td>
             </tr>

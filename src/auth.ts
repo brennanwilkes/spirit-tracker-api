@@ -49,6 +49,19 @@ async function hmacSha256Hex(secret: string, msg: string): Promise<string> {
     .join('');
 }
 
+// ---- Signed unsubscribe links ----
+// Stateless and non-expiring so links in old emails keep working. The "unsubscribe:" prefix keeps
+// this signature from colliding with JWT signatures made with the same secret.
+
+export async function unsubscribeSig(env: Env, userId: string): Promise<string> {
+  return hmacSha256Hex(env.JWT_SECRET, `unsubscribe:${userId}`);
+}
+
+export async function verifyUnsubscribeSig(env: Env, userId: string, sig: string): Promise<boolean> {
+  if (!/^[0-9a-f]{64}$/.test(sig)) return false;
+  return timingSafeEqualHex(await unsubscribeSig(env, userId), sig);
+}
+
 export async function requireEmailPackHmac(req: Request, env: Env): Promise<void> {
   const secret = env.EMAIL_PACK_HMAC_SECRET;
   if (!secret) throw new Error('Unauthorized');
