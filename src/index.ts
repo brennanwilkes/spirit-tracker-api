@@ -576,8 +576,8 @@ async function handleEmailPack(req: Request, env: Env): Promise<Response> {
   let cursor: string | undefined = undefined;
 
   do {
-    const res = await env.AUTH_KV.list({ prefix: "auth/email/", cursor, limit: 1000 });
-    cursor = res.cursor;
+    const res: KVNamespaceListResult<unknown> = await env.AUTH_KV.list({ prefix: "auth/email/", cursor, limit: 1000 });
+    cursor = res.list_complete ? undefined : res.cursor;
 
     for (const k of res.keys) {
       const email = k.name.slice("auth/email/".length);
@@ -924,8 +924,8 @@ async function handleShortlistsGet(req: Request, env: Env): Promise<Response> {
 
   let cursor: string | undefined = undefined;
   do {
-    const res = await env.AUTH_KV.list({ prefix: 'acct/', cursor, limit: 1000 });
-    cursor = res.cursor;
+    const res: KVNamespaceListResult<unknown> = await env.AUTH_KV.list({ prefix: 'acct/', cursor, limit: 1000 });
+    cursor = res.list_complete ? undefined : res.cursor;
 
     for (const k of res.keys) {
       // only details objects
